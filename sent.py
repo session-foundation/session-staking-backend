@@ -534,6 +534,55 @@ def load_registrations(sn_pubkey: bytes):
     return json_response({"registrations": regs})
 
 
+@app.route("/registrations/<ethwallet:op>")
+def operator_registrations(op: bytes):
+    """
+    Retrieves stored registration(s) with the given operator.
+
+    This returns an array in the "registrations" field containing as many registrations as are
+    current stored for the given operator wallet, sorted from most to least recently submitted.
+
+    Fields are the same as the version of this endpoint that takes a SN pubkey.
+
+    Returns a 404 Not Found error if no registrations for the operator are known at all.
+    """
+
+    regs = []
+
+    op = bytes.fromhex(op[2:])
+    with get_sql() as sql:
+        cur = sql.cursor()
+        cur.execute(
+            """
+            SELECT pubkey_ed25519, pubkey_bls, sig_ed25519, sig_bls, contract, timestamp
+            FROM registrations
+            WHERE operator = ?
+            ORDER BY timestamp DESC
+            """,
+            (op,),
+        )
+        for sn_pubkey, pk_bls, sig_ed, sig_bls, contract, timestamp in cur:
+            params = {
+                "type": "solo" if contract is None else "contract",
+                "pubkey_ed25519": sn_pubkey,
+                "pubkey_bls": pk_bls,
+                "sig_ed25519": sig_ed,
+                "sig_bls": sig_bls,
+                "operator": op,
+                "timestamp": timestamp,
+            }
+
+            if contract is not None:
+                params["contract"] = contract
+
+            regs.append(params)
+
+    if not regs:
+        return flask.abort(404)
+
+    return json_response({"registrations": regs})
+
+
 def check_stakes(stakes, total, stakers, max_stakers):
     if len(stakers) != len(stakes):
         raise ValueError(f"s and S have different lengths")
