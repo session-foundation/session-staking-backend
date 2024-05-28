@@ -28,6 +28,12 @@ import qrcode
 from io import BytesIO
 import config
 from omq import FutureJSON, omq_connection
+from timer import timer
+
+from contracts.reward_rate_pool import RewardRatePoolInterface
+from contracts.service_node_contribution import ContributorContractInterface
+from contracts.service_node_contribution_factory import ServiceNodeContributionFactory
+
 
 # Make a dict of config.* to pass to templating
 conf = {x: getattr(config, x) for x in dir(config) if not x.startswith("__")}
@@ -40,8 +46,15 @@ if git_rev.returncode == 0:
 else:
     git_rev = "(unknown)"
 
-app = flask.Flask(__name__)
+def create_app():
+    app = flask.Flask(__name__)
+    app.reward_rate_pool = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
+    app.service_node_contribution_factory = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
+    app.service_node_contribution = ContributorContractInterface(config.PROVIDER_ENDPOINT)
 
+    return app
+
+app = create_app()
 
 def get_sql():
     if "db" not in flask.g:
@@ -111,6 +124,7 @@ def get_sns_future(omq, oxend):
                     "service_node_pubkey",
                     "requested_unlock_height",
                     "active",
+                    "bls_key",
                     "funded",
                     "earned_downtime_blocks",
                     "service_node_version",
@@ -124,6 +138,8 @@ def get_sns_future(omq, oxend):
                     "last_uptime_proof",
                     "state_height",
                     "swarm_id",
+                    "is_removable",
+                    "is_liquidatable",
                 )
             },
         },
@@ -211,6 +227,68 @@ def json_response(vals):
 
     return flask.jsonify({**vals, "network": get_info(), "t": time.time()})
 
+@timer(60, target="worker1")
+def fetch_contribution_contracts(signum):
+    with app.app_context(), get_sql() as sql:
+        cursor = sql.cursor()
+        app.logger.info("Fetching new contribution contract events")
+
+        new_contracts = app.service_node_contribution_factory.get_latest_contribution_contract_events()
+
+        for event in new_contracts:
+            contract_address = event['args']['contractAddress']
+            cursor.execute(
+                """
+                INSERT INTO contribution_contracts (contract_address)
+                SELECT ? WHERE NOT EXISTS (
+                    SELECT 1 FROM contribution_contracts WHERE contract_address = ?
+                )
+                """,
+                (contract_address, contract_address)
+            )
+        sql.commit()
+
+        app.logger.info(f"Processed {len(new_contracts)} new contracts")
+
+@timer(60)
+def update_contract_statuses(signum):
+    with app.app_context(), get_sql() as sql:
+        cursor = sql.cursor()
+        cursor.execute("SELECT contract_address FROM contribution_contracts")
+        contract_addresses = cursor.fetchall()
+
+        app.logger.info("Updating contract statuses")
+
+        for (contract_address,) in contract_addresses:
+            contract_interface = app.service_node_contributor.get_contract_instance(contract_address)
+
+            # Fetch statuses and other details
+            is_finalized = contract_interface.is_finalized()
+            is_cancelled = contract_interface.is_cancelled()
+            bls_pubkey = contract_interface.get_bls_pubkey()
+            service_node_params = contract_interface.get_service_node_params()
+            contributor_addresses = contract_interface.get_contributor_addresses()
+            total_contributions = contract_interface.total_contribution()
+
+            # Store the details in a dictionary in the app context
+            if not hasattr(app, 'contracts'):
+                app.contracts = {}
+
+            app.contracts[contract_address] = {
+                'finalized': is_finalized,
+                'cancelled': is_cancelled,
+                'bls_pubkey': bls_pubkey,
+                'service_node_params': service_node_params,
+                'contributor_addresses': contributor_addresses,
+                'total_contributions': total_contributions
+            }
+
+        app.logger.info(f"Updated statuses for {len(contract_addresses)} contracts")
+
+@timer(60)
+def update_service_nodes(signum):
+    omq, oxend = omq_connection()
+    app.nodes = {"nodes": get_sns_future(omq, oxend).get()}
 
 @app.route("/info")
 def network_info():
@@ -233,6 +311,47 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
         sn
         for sn in get_sns_future(omq, oxend).get()["service_node_states"]
         if wallet in (c["address"] for c in sn["contributors"])
+    ]
+
+    contracts = []
+    if hasattr(app, 'contracts') and eth_wal:
+        for address, details in app.contracts.items():
+            if wallet in (addr.lower() for addr in details['contributor_addresses']):
+                contributor_contracts.append({
+                    'contract_address': address,
+                    'details': details
+                })
+
+    return json_response({"nodes": sns, "contracts": contracts})
+
+@app.route("/nodes/liquidatable")
+def get_liquidatable_nodes():
+    omq, oxend = omq_connection()
+    sns = [
+        sn
+        for sn in get_sns_future(omq, oxend).get()["service_node_states"]
+        if sn["is_liquidatable"]
+    ]
+
+    return json_response({"nodes": sns})
+
+@app.route("/nodes/removeable")
+def get_removable_nodes():
+    omq, oxend = omq_connection()
+    sns = [
+        sn
+        for sn in get_sns_future(omq, oxend).get()["service_node_states"]
+        if sn["is_removeable"]
+    ]
+
+    return json_response({"nodes": sns})
+
+@app.route("/nodes/open")
+def get_contributable_contracts():
+    sns = [
+        sn
+        for sn in app.contracts
+        if not sn.is_finalized and not sn.is_cancelled
     ]
 
     return json_response({"nodes": sns})
