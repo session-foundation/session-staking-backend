@@ -355,16 +355,14 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 })
                 if details["finalized"]:
                     continue
-                #TODO sean get balance
-                balance = 0
                 state = 'Awaiting Contributors'
                 if details["cancelled"]:
                     state = 'Cancelled'
                 nodes.append({
-                    'balance': balance,
+                    'balance': details["contributions"][eth_format(wallet)],
                     'contributors': details["contributions"],
                     'last_uptime_proof': 0,
-#                    'operator_address': details["contributions"][0]["address"],
+                    'operator_address': details["contributor_addresses"][0],
                     'operator_fee': details["service_node_params"]["fee"],
                     'requested_unlock_height': 0,
                     'service_node_pubkey': details["service_node_params"]["serviceNodePubkey"],
