@@ -269,6 +269,7 @@ def update_contract_statuses(signum):
             service_node_params = contract_interface.get_service_node_params()
             contributor_addresses = contract_interface.get_contributor_addresses()
             total_contributions = contract_interface.total_contribution()
+            contributions = contract_interface.get_individual_contributions()
 
             # Store the details in a dictionary in the app context
             if not hasattr(app, 'contracts'):
@@ -280,7 +281,8 @@ def update_contract_statuses(signum):
                 'bls_pubkey': bls_pubkey,
                 'service_node_params': service_node_params,
                 'contributor_addresses': contributor_addresses,
-                'total_contributions': total_contributions
+                'total_contributions': total_contributions,
+                'contributions': contributions,
             }
 
         app.logger.info(f"Updated statuses for {len(contract_addresses)} contracts")
@@ -299,6 +301,15 @@ def network_info():
     return json_response({})
 
 
+
+# export enum NODE_STATE {
+  # RUNNING = 'Running',
+  # AWAITING_CONTRIBUTORS = 'Awaiting Contributors',
+  # CANCELLED = 'Cancelled',
+  # DECOMMISSIONED = 'Decommissioned',
+  # DEREGISTERED = 'Deregistered',
+  # VOLUNTARY_DEREGISTRATION = 'Voluntary Deregistration',
+# }
 @app.route("/nodes/<oxenwallet:oxen_wal>")
 @app.route("/nodes/<ethwallet:eth_wal>")
 def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
@@ -313,6 +324,26 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
         if wallet in (c["address"] for c in sn["contributors"])
     ]
 
+    nodes = []
+    for node in sns:
+        balance = 0
+        for contributor in node["contributors"]:
+            if contributor["address"] == wallet:
+                balance = contributor["amount"]
+        state = 'Running'
+        if not node["active"] and node["funded"]:
+            state = 'Decommissioned'
+        nodes.append({
+            'balance': balance,
+            'contributors': node["contributors"],
+            'last_uptime_proof': node["last_uptime_proof"],
+            'operator_address': node["operator_address"],
+            'operator_fee': node["portions_for_operator"],
+            'requested_unlock_height': node["requested_unlock_height"],
+            'service_node_pubkey': node["pubkey_ed25519"],
+            'state': state,
+        })
+
     contracts = []
     if hasattr(app, 'contracts') and eth_wal:
         for address, details in app.contracts.items():
@@ -321,8 +352,25 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                     'contract_address': address,
                     'details': details
                 })
+                if details["finalized"]:
+                    continue
+                #TODO sean get balance
+                state = 'Awaiting Contributors'
+                if details["cancelled"]:
+                    state = 'Cancelled'
+                nodes.append({
+                    'balance': balance,
+                    'contributors': details["contributors"],
+                    'last_uptime_proof': 0,
+                    'operator_address': details["contributors"][0]["address"],
+                    'operator_fee': details["service_node_params"]["fee"],
+                    'requested_unlock_height': 0,
+                    'service_node_pubkey': details["service_node_params"]["serviceNodePubkey"],
+                    'state': state,
+                })
 
-    return json_response({"nodes": sns, "contracts": contracts})
+
+    return json_response({"service_nodes": sns, "contracts": contracts, "nodes": nodes})
 
 @app.route("/nodes/liquidatable")
 def get_liquidatable_nodes():
