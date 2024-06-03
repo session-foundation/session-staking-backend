@@ -236,6 +236,7 @@ def fetch_contribution_contracts(signum):
         new_contracts = app.service_node_contribution_factory.get_latest_contribution_contract_events()
 
         for event in new_contracts:
+            console.log(event)
             contract_address = event['args']['contractAddress']
             cursor.execute(
                 """
