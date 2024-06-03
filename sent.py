@@ -236,8 +236,8 @@ def fetch_contribution_contracts(signum):
         new_contracts = app.service_node_contribution_factory.get_latest_contribution_contract_events()
 
         for event in new_contracts:
-            console.log(event)
-            contract_address = event['args']['contractAddress']
+            app.logger.info(event)
+            contract_address = event.args.contributorContract
             cursor.execute(
                 """
                 INSERT INTO contribution_contracts (contract_address)
@@ -261,7 +261,7 @@ def update_contract_statuses(signum):
         app.logger.info("Updating contract statuses")
 
         for (contract_address,) in contract_addresses:
-            contract_interface = app.service_node_contributor.get_contract_instance(contract_address)
+            contract_interface = app.service_node_contribution.get_contract_instance(contract_address)
 
             # Fetch statuses and other details
             is_finalized = contract_interface.is_finalized()
@@ -349,21 +349,22 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
     if hasattr(app, 'contracts') and eth_wal:
         for address, details in app.contracts.items():
             if wallet in (addr.lower() for addr in details['contributor_addresses']):
-                contributor_contracts.append({
+                contracts.append({
                     'contract_address': address,
                     'details': details
                 })
                 if details["finalized"]:
                     continue
                 #TODO sean get balance
+                balance = 0
                 state = 'Awaiting Contributors'
                 if details["cancelled"]:
                     state = 'Cancelled'
                 nodes.append({
                     'balance': balance,
-                    'contributors': details["contributors"],
+                    'contributors': details["contributions"],
                     'last_uptime_proof': 0,
-                    'operator_address': details["contributors"][0]["address"],
+#                    'operator_address': details["contributions"][0]["address"],
                     'operator_fee': details["service_node_params"]["fee"],
                     'requested_unlock_height': 0,
                     'service_node_pubkey': details["service_node_params"]["serviceNodePubkey"],

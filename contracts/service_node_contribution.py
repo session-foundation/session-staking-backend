@@ -19,7 +19,7 @@ class ContributorContractInterface:
         :param contract_address: Address of the contract to interact with.
         :return: Web3 Contract object.
         """
-        contract = self.web3.eth.contract(address=Web3.toChecksumAddress(contract_address), abi=self.abi)
+        contract = self.web3.eth.contract(address=Web3.to_checksum_address(contract_address), abi=self.abi)
         return ServiceNodeContribution(contract)
 
 class ServiceNodeContribution:
@@ -38,7 +38,7 @@ class ServiceNodeContribution:
         :param contributor_address: Address of the contributor.
         :return: Contribution amount of the specified contributor.
         """
-        return self.contract.functions.contributions(Web3.toChecksumAddress(contributor_address)).call()
+        return self.contract.functions.contributions(Web3.to_checksum_address(contributor_address)).call()
 
     def is_finalized(self):
         """
@@ -99,7 +99,14 @@ class ServiceNodeContribution:
         Get the list of contributor addresses.
         :return: List of addresses of contributors.
         """
-        return self.contract.functions.contributorAddresses().call()
+        addresses = []
+        for index in range(self.contract.functions.maxContributors().call()):
+            try:
+                addresses.append(self.contract.functions.contributorAddresses(index).call())
+            except:
+                continue
+
+        return addresses
 
     def get_individual_contributions(self):
         """
