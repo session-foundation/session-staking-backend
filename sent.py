@@ -313,17 +313,14 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
     wallet = eth_wal.lower() if eth_wal is not None else oxen_wal
     sns = []
     nodes = []
-    formatted_eth_wallet = eth_format(wallet) if eth_wal else None  # Compute once
+    formatted_eth_wallet = eth_format(wallet) if eth_wal else None
     if hasattr(app, 'nodes'):
         for node in app.nodes:
             contributors = {c["address"]: c["amount"] for c in node["contributors"]}
             if wallet not in contributors:
                 continue
             sns.append(node)
-            balance = 0
-            for contributor in node["contributors"]:
-                if contributor["address"] == wallet:
-                    balance = contributor["amount"]
+            balance = contributors.get(wallet, 0)
             state = 'Decommissioned' if not node["active"] and node["funded"] else 'Running'
             nodes.append({
                 'balance': balance,
@@ -339,7 +336,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
     contracts = []
     if hasattr(app, 'contracts') and eth_wal:
         for address, details in app.contracts.items():
-            if formatted_eth_wallet not in details['contributor_addresses']:
+            if formatted_eth_wallet not in details["contributions"]:
                 continue
             contracts.append({
                 'contract_address': address,
@@ -349,7 +346,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 continue
             state = 'Cancelled' if details["cancelled"] else 'Awaiting Contributors'
             nodes.append({
-                'balance': details["contributions"][formatted_eth_wallet],
+                'balance': details["contributions"].get(formatted_eth_wallet, 0),
                 'contributors': details["contributions"],
                 'last_uptime_proof': 0,
                 'operator_address': details["contributor_addresses"][0],
