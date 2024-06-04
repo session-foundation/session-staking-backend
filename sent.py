@@ -29,6 +29,7 @@ from io import BytesIO
 import config
 from omq import FutureJSON, omq_connection
 from timer import timer
+import datetime
 
 from contracts.reward_rate_pool import RewardRatePoolInterface
 from contracts.service_node_contribution import ContributorContractInterface
@@ -231,12 +232,10 @@ def json_response(vals):
 def fetch_contribution_contracts(signum):
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
-        app.logger.info("Fetching new contribution contract events")
 
         new_contracts = app.service_node_contribution_factory.get_latest_contribution_contract_events()
 
         for event in new_contracts:
-            app.logger.info(event)
             contract_address = event.args.contributorContract
             cursor.execute(
                 """
@@ -249,7 +248,6 @@ def fetch_contribution_contracts(signum):
             )
         sql.commit()
 
-        app.logger.info(f"Processed {len(new_contracts)} new contracts")
 
 @timer(60)
 def update_contract_statuses(signum):
@@ -257,8 +255,6 @@ def update_contract_statuses(signum):
         cursor = sql.cursor()
         cursor.execute("SELECT contract_address FROM contribution_contracts")
         contract_addresses = cursor.fetchall()
-
-        app.logger.info("Updating contract statuses")
 
         for (contract_address,) in contract_addresses:
             contract_interface = app.service_node_contribution.get_contract_instance(contract_address)
@@ -286,12 +282,11 @@ def update_contract_statuses(signum):
                 'contributions': contributions,
             }
 
-        app.logger.info(f"Updated statuses for {len(contract_addresses)} contracts")
 
 @timer(60)
 def update_service_nodes(signum):
     omq, oxend = omq_connection()
-    app.nodes = {"nodes": get_sns_future(omq, oxend).get()}
+    app.nodes = get_sns_future(omq, oxend).get()["service_node_states"]
 
 @app.route("/info")
 def network_info():
@@ -314,60 +309,58 @@ def network_info():
 @app.route("/nodes/<oxenwallet:oxen_wal>")
 @app.route("/nodes/<ethwallet:eth_wal>")
 def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
-    omq, oxend = omq_connection()
-
     assert oxen_wal is not None or eth_wal is not None
-
     wallet = eth_wal.lower() if eth_wal is not None else oxen_wal
-    sns = [
-        sn
-        for sn in get_sns_future(omq, oxend).get()["service_node_states"]
-        if wallet in (c["address"] for c in sn["contributors"])
-    ]
-
+    sns = []
     nodes = []
-    for node in sns:
-        balance = 0
-        for contributor in node["contributors"]:
-            if contributor["address"] == wallet:
-                balance = contributor["amount"]
-        state = 'Running'
-        if not node["active"] and node["funded"]:
-            state = 'Decommissioned'
-        nodes.append({
-            'balance': balance,
-            'contributors': node["contributors"],
-            'last_uptime_proof': node["last_uptime_proof"],
-            'operator_address': node["operator_address"],
-            'operator_fee': node["portions_for_operator"],
-            'requested_unlock_height': node["requested_unlock_height"],
-            'service_node_pubkey': node["pubkey_ed25519"],
-            'state': state,
-        })
+    if hasattr(app, 'nodes'):
+        for node in app.nodes:
+            if wallet not in (c["address"] for c in node["contributors"]):
+                continue
+            sns.append(node)
+            balance = 0
+            for contributor in node["contributors"]:
+                if contributor["address"] == wallet:
+                    balance = contributor["amount"]
+            state = 'Running'
+            if not node["active"] and node["funded"]:
+                state = 'Decommissioned'
+            nodes.append({
+                'balance': balance,
+                'contributors': node["contributors"],
+                'last_uptime_proof': node["last_uptime_proof"],
+                'operator_address': node["operator_address"],
+                'operator_fee': node["portions_for_operator"],
+                'requested_unlock_height': node["requested_unlock_height"],
+                'service_node_pubkey': node["pubkey_ed25519"],
+                'state': state,
+            })
 
     contracts = []
     if hasattr(app, 'contracts') and eth_wal:
+        formatted_eth_wallet = eth_format(wallet)
         for address, details in app.contracts.items():
-            if wallet in (addr.lower() for addr in details['contributor_addresses']):
-                contracts.append({
-                    'contract_address': address,
-                    'details': details
-                })
-                if details["finalized"]:
-                    continue
-                state = 'Awaiting Contributors'
-                if details["cancelled"]:
-                    state = 'Cancelled'
-                nodes.append({
-                    'balance': details["contributions"][eth_format(wallet)],
-                    'contributors': details["contributions"],
-                    'last_uptime_proof': 0,
-                    'operator_address': details["contributor_addresses"][0],
-                    'operator_fee': details["service_node_params"]["fee"],
-                    'requested_unlock_height': 0,
-                    'service_node_pubkey': details["service_node_params"]["serviceNodePubkey"],
-                    'state': state,
-                })
+            if formatted_eth_wallet not in details['contributor_addresses']:
+                continue
+            contracts.append({
+                'contract_address': address,
+                'details': details
+            })
+            if details["finalized"]:
+                continue
+            state = 'Awaiting Contributors'
+            if details["cancelled"]:
+                state = 'Cancelled'
+            nodes.append({
+                'balance': details["contributions"][formatted_eth_wallet],
+                'contributors': details["contributions"],
+                'last_uptime_proof': 0,
+                'operator_address': details["contributor_addresses"][0],
+                'operator_fee': details["service_node_params"]["fee"],
+                'requested_unlock_height': 0,
+                'service_node_pubkey': details["service_node_params"]["serviceNodePubkey"],
+                'state': state,
+            })
 
 
     return json_response({"service_nodes": sns, "contracts": contracts, "nodes": nodes})
