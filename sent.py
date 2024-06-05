@@ -255,6 +255,8 @@ def update_contract_statuses(signum):
         cursor = sql.cursor()
         cursor.execute("SELECT contract_address FROM contribution_contracts")
         contract_addresses = cursor.fetchall()
+        app.contributors = {}
+        app.contracts = {}
 
         for (contract_address,) in contract_addresses:
             contract_interface = app.service_node_contribution.get_contract_instance(contract_address)
@@ -268,10 +270,6 @@ def update_contract_statuses(signum):
             total_contributions = contract_interface.total_contribution()
             contributions = contract_interface.get_individual_contributions()
 
-            # Store the details in a dictionary in the app context
-            if not hasattr(app, 'contracts'):
-                app.contracts = {}
-
             app.contracts[contract_address] = {
                 'finalized': is_finalized,
                 'cancelled': is_cancelled,
@@ -282,11 +280,26 @@ def update_contract_statuses(signum):
                 'contributions': contributions,
             }
 
+            for address in contributor_addresses:
+                if address not in app.contributors:
+                    app.contributors[address] = []
+                if contract_address not in app.contributors[address]:
+                    app.contributors[address].append(contract_address)
+
 
 @timer(60)
 def update_service_nodes(signum):
     omq, oxend = omq_connection()
     app.nodes = get_sns_future(omq, oxend).get()["service_node_states"]
+    app.node_contributors = {}
+
+    for index, node in enumerate(app.nodes):
+        contributors = {c["address"]: c["amount"] for c in node["contributors"]}
+
+        for address in contributors.keys():
+            if address not in app.node_contributors:
+                app.node_contributors[address] = []
+            app.node_contributors[address].append(index)
 
 @app.route("/info")
 def network_info():
@@ -314,11 +327,9 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
     sns = []
     nodes = []
     formatted_eth_wallet = eth_format(wallet) if eth_wal else None
-    if hasattr(app, 'nodes'):
-        for node in app.nodes:
-            contributors = {c["address"]: c["amount"] for c in node["contributors"]}
-            if wallet not in contributors:
-                continue
+    if hasattr(app, 'node_contributors') and wallet in app.node_contributors:
+        for index in app.node_contributors[wallet]:
+            node = app.nodes[index]
             sns.append(node)
             balance = contributors.get(wallet, 0)
             state = 'Decommissioned' if not node["active"] and node["funded"] else 'Running'
@@ -334,10 +345,9 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
             })
 
     contracts = []
-    if hasattr(app, 'contracts') and eth_wal:
-        for address, details in app.contracts.items():
-            if formatted_eth_wallet not in details["contributions"]:
-                continue
+    if hasattr(app, 'contributors') and formatted_eth_wallet in app.contributors:
+        for address in app.contributors[formatted_eth_wallet]:
+            details = app.contracts[address]
             contracts.append({
                 'contract_address': address,
                 'details': details
@@ -355,7 +365,6 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'service_node_pubkey': details["service_node_params"]["serviceNodePubkey"],
                 'state': state,
             })
-
 
     return json_response({"service_nodes": sns, "contracts": contracts, "nodes": nodes})
 
