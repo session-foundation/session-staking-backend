@@ -228,7 +228,7 @@ def json_response(vals):
 
     return flask.jsonify({**vals, "network": get_info(), "t": time.time()})
 
-@timer(60, target="worker1")
+@timer(250, target="worker1")
 def fetch_contribution_contracts(signum):
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
@@ -249,7 +249,7 @@ def fetch_contribution_contracts(signum):
         sql.commit()
 
 
-@timer(60)
+@timer(300)
 def update_contract_statuses(signum):
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
@@ -287,7 +287,7 @@ def update_contract_statuses(signum):
                     app.contributors[address].append(contract_address)
 
 
-@timer(60)
+@timer(152)
 def update_service_nodes(signum):
     omq, oxend = omq_connection()
     app.nodes = get_sns_future(omq, oxend).get()["service_node_states"]
@@ -331,7 +331,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
         for index in app.node_contributors[wallet]:
             node = app.nodes[index]
             sns.append(node)
-            balance = contributors.get(wallet, 0)
+            balance = {c["address"]: c["amount"] for c in node["contributors"]}.get(wallet, 0)
             state = 'Decommissioned' if not node["active"] and node["funded"] else 'Running'
             nodes.append({
                 'balance': balance,
