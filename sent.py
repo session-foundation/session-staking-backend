@@ -230,6 +230,7 @@ def json_response(vals):
 
 @timer(250, target="worker1")
 def fetch_contribution_contracts(signum):
+    app.logger.warning(f"Fetch contribution contracts start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
 
@@ -247,10 +248,12 @@ def fetch_contribution_contracts(signum):
                 (contract_address, contract_address)
             )
         sql.commit()
+    app.logger.warning(f"Fetch contribution contracts finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
 
 @timer(300)
 def update_contract_statuses(signum):
+    app.logger.warning(f"Update Contract Statuses Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
         cursor.execute("SELECT contract_address FROM contribution_contracts")
@@ -286,12 +289,16 @@ def update_contract_statuses(signum):
                 if contract_address not in app.contributors[address]:
                     app.contributors[address].append(contract_address)
 
+    app.logger.warning(f"Update Contract Statuses Finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+
 
 @timer(152)
 def update_service_nodes(signum):
+    app.logger.warning(f"Update Service Nodes Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
     omq, oxend = omq_connection()
     app.nodes = get_sns_future(omq, oxend).get()["service_node_states"]
     app.node_contributors = {}
+    app.logger.warning(f"Update Service Nodes nodes in, looping- {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     for index, node in enumerate(app.nodes):
         contributors = {c["address"]: c["amount"] for c in node["contributors"]}
@@ -300,6 +307,8 @@ def update_service_nodes(signum):
             if address not in app.node_contributors:
                 app.node_contributors[address] = []
             app.node_contributors[address].append(index)
+
+    app.logger.warning(f"Update Service Nodes finished - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
 @app.route("/info")
 def network_info():
