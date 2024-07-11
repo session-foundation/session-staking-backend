@@ -78,9 +78,10 @@ class ServiceNodeContribution:
     def get_bls_pubkey(self):
         """
         Get the BLS public key.
-        :return: Tuple of BLS public key coordinates.
+        :return: BLS public key, in hex.
         """
-        return self.contract.functions.blsPubkey().call()
+        pks = self.contract.functions.blsPubkey().call()
+        return "0x{:0128x}".format((pks[0] << 256) + pks[1])
 
     def get_service_node_params(self):
         """
@@ -89,9 +90,9 @@ class ServiceNodeContribution:
         """
         params = self.contract.functions.serviceNodeParams().call()
         return {
-            'serviceNodePubkey': params[0],
-            'serviceNodeSignature': params[1] + params[2],
-            'fee': params[3]
+                'serviceNodePubkey': f"{params[0]:032x}",
+                'serviceNodeSignature': f"{params[1]:032x}{params[2]:032x}",
+                'fee': params[3]
         }
 
     def get_contributor_addresses(self):

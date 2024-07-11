@@ -77,7 +77,7 @@ if contract == b'RANDOM':
 a = SigningKey(pk_seed)
 pk_ed = a.verify_key.encode()
 
-to_sign = pk_ed + pk_bls + (contract if contract else op)
+to_sign = pk_ed + pk_bls
 sig_ed = a.sign(to_sign)[0:64]
 
 and_contract = f"&contract=0x{contract.hex()}" if contract else ""

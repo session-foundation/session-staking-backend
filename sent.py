@@ -88,9 +88,10 @@ class EthConverter(BaseConverter):
 
 b58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 oxen_wallet_re = (
-    f"T[{b58}]{{96}}"
-    if config.testnet
-    else f"dV[{b58}]{{95}}" if config.devnet else f"L[{b58}]{{94}}"
+    f"T[{b58}]{{96}}" if config.testnet
+    else f"dV[{b58}]{{95}}" if config.devnet
+    else f"ST[{b58}]{{95}}" if config.stagenet
+    else f"L[{b58}]{{94}}"
 )
 
 
@@ -197,7 +198,7 @@ def hexify(container):
 
 # FIXME: this staking requirement value is just a placeholder for now.  We probably also want to
 # expose and retrieve this from oxend rather than hard coding it here.
-MAX_STAKE = 20000_000000000
+MAX_STAKE = 120_000000000
 MIN_OP_STAKE = MAX_STAKE // 4
 MAX_STAKERS = 10
 TOKEN_NAME = "SENT"
@@ -228,7 +229,7 @@ def json_response(vals):
 
     return flask.jsonify({**vals, "network": get_info(), "t": time.time()})
 
-@timer(250, target="worker1")
+@timer(10, target="worker1")
 def fetch_contribution_contracts(signum):
     app.logger.warning(f"Fetch contribution contracts start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
     with app.app_context(), get_sql() as sql:
@@ -240,18 +241,16 @@ def fetch_contribution_contracts(signum):
             contract_address = event.args.contributorContract
             cursor.execute(
                 """
-                INSERT INTO contribution_contracts (contract_address)
-                SELECT ? WHERE NOT EXISTS (
-                    SELECT 1 FROM contribution_contracts WHERE contract_address = ?
-                )
+                INSERT INTO contribution_contracts (contract_address) VALUES (?)
+                ON CONFLICT (contract_address) DO NOTHING
                 """,
-                (contract_address, contract_address)
+                (contract_address,)
             )
         sql.commit()
     app.logger.warning(f"Fetch contribution contracts finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
 
-@timer(300)
+@timer(30)
 def update_contract_statuses(signum):
     app.logger.warning(f"Update Contract Statuses Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
     with app.app_context(), get_sql() as sql:
@@ -269,7 +268,7 @@ def update_contract_statuses(signum):
             is_cancelled = contract_interface.is_cancelled()
             bls_pubkey = contract_interface.get_bls_pubkey()
             service_node_params = contract_interface.get_service_node_params()
-            contributor_addresses = contract_interface.get_contributor_addresses()
+            #contributor_addresses = contract_interface.get_contributor_addresses()
             total_contributions = contract_interface.total_contribution()
             contributions = contract_interface.get_individual_contributions()
 
@@ -277,13 +276,16 @@ def update_contract_statuses(signum):
                 'finalized': is_finalized,
                 'cancelled': is_cancelled,
                 'bls_pubkey': bls_pubkey,
-                'service_node_params': service_node_params,
-                'contributor_addresses': contributor_addresses,
+                'fee': service_node_params['fee'],
+                'service_node_pubkey': service_node_params['serviceNodePubkey'],
+                'service_node_signature': service_node_params['serviceNodeSignature'],
+                'contributions': [
+                    {"address": addr, "amount": amt} for addr, amt in contributions.items()
+                ],
                 'total_contributions': total_contributions,
-                'contributions': contributions,
             }
 
-            for address in contributor_addresses:
+            for address in contributions.keys():
                 if address not in app.contributors:
                     app.contributors[address] = []
                 if contract_address not in app.contributors[address]:
@@ -292,7 +294,7 @@ def update_contract_statuses(signum):
     app.logger.warning(f"Update Contract Statuses Finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
 
-@timer(152)
+@timer(10)
 def update_service_nodes(signum):
     app.logger.warning(f"Update Service Nodes Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
     omq, oxend = omq_connection()
@@ -401,13 +403,17 @@ def get_removable_nodes():
 
 @app.route("/nodes/open")
 def get_contributable_contracts():
-    sns = [
-        sn
-        for sn in app.contracts
-        if not sn.is_finalized and not sn.is_cancelled
-    ]
-
-    return json_response({"nodes": sns})
+    return json_response({
+        "nodes": [
+            {
+                "contract": addr,
+                **details
+            }
+            for addr, details in app.contracts.items()
+            if not details['finalized'] and not details['cancelled']
+            # FIXME: we should also filter out reserved contracts
+        ]
+    })
 
 
 # Decodes `x` into a bytes of length `length`.  `x` should be hex or base64 encoded, without
@@ -489,7 +495,6 @@ def check_reg_keys_sigs(params):
     signed = (
         params["pubkey_ed25519"]
         + params["pubkey_bls"]
-        + (contract if contract else params["operator"])
     )
 
     try:
@@ -561,7 +566,7 @@ def parse_query_params(params: dict[str, Callable[[str, str], Any]]):
         for k, cb in params.items()
     }
 
-    for k, v in flask.request.args.items(multi=True):
+    for k, v in flask.request.values.items(multi=True):
         found = param_map.get(k)
         if found is None:
             raise ParseUnknownError(k)
@@ -577,13 +582,13 @@ def parse_query_params(params: dict[str, Callable[[str, str], Any]]):
 
     for k, p in param_map.items():
         optional = p[0]
-        if not optional and k not in flask.request.args:
+        if not optional and k not in flask.request.values:
             raise ParseMissingError(k)
 
     return parsed
 
 
-@app.route("/store/<hex64:sn_pubkey>")
+@app.route("/store/<hex64:sn_pubkey>", methods=["GET", "POST"])
 def store_registration(sn_pubkey: bytes):
     """
     Stores (or replaces) the pubkeys/signatures associated with a service node that are needed to
