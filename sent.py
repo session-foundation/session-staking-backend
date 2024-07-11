@@ -28,6 +28,13 @@ import qrcode
 from io import BytesIO
 import config
 from omq import FutureJSON, omq_connection
+from timer import timer
+import datetime
+
+from contracts.reward_rate_pool import RewardRatePoolInterface
+from contracts.service_node_contribution import ContributorContractInterface
+from contracts.service_node_contribution_factory import ServiceNodeContributionFactory
+
 
 # Make a dict of config.* to pass to templating
 conf = {x: getattr(config, x) for x in dir(config) if not x.startswith("__")}
@@ -40,8 +47,15 @@ if git_rev.returncode == 0:
 else:
     git_rev = "(unknown)"
 
-app = flask.Flask(__name__)
+def create_app():
+    app = flask.Flask(__name__)
+    app.reward_rate_pool = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
+    app.service_node_contribution_factory = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
+    app.service_node_contribution = ContributorContractInterface(config.PROVIDER_ENDPOINT)
 
+    return app
+
+app = create_app()
 
 def get_sql():
     if "db" not in flask.g:
@@ -74,9 +88,10 @@ class EthConverter(BaseConverter):
 
 b58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 oxen_wallet_re = (
-    f"T[{b58}]{{96}}"
-    if config.testnet
-    else f"dV[{b58}]{{95}}" if config.devnet else f"L[{b58}]{{94}}"
+    f"T[{b58}]{{96}}" if config.testnet
+    else f"dV[{b58}]{{95}}" if config.devnet
+    else f"ST[{b58}]{{95}}" if config.stagenet
+    else f"L[{b58}]{{94}}"
 )
 
 
@@ -111,6 +126,7 @@ def get_sns_future(omq, oxend):
                     "service_node_pubkey",
                     "requested_unlock_height",
                     "active",
+                    "bls_key",
                     "funded",
                     "earned_downtime_blocks",
                     "service_node_version",
@@ -124,6 +140,8 @@ def get_sns_future(omq, oxend):
                     "last_uptime_proof",
                     "state_height",
                     "swarm_id",
+                    "is_removable",
+                    "is_liquidatable",
                 )
             },
         },
@@ -180,7 +198,7 @@ def hexify(container):
 
 # FIXME: this staking requirement value is just a placeholder for now.  We probably also want to
 # expose and retrieve this from oxend rather than hard coding it here.
-MAX_STAKE = 20000_000000000
+MAX_STAKE = 120_000000000
 MIN_OP_STAKE = MAX_STAKE // 4
 MAX_STAKERS = 10
 TOKEN_NAME = "SENT"
@@ -211,6 +229,88 @@ def json_response(vals):
 
     return flask.jsonify({**vals, "network": get_info(), "t": time.time()})
 
+@timer(10, target="worker1")
+def fetch_contribution_contracts(signum):
+    app.logger.warning(f"Fetch contribution contracts start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    with app.app_context(), get_sql() as sql:
+        cursor = sql.cursor()
+
+        new_contracts = app.service_node_contribution_factory.get_latest_contribution_contract_events()
+
+        for event in new_contracts:
+            contract_address = event.args.contributorContract
+            cursor.execute(
+                """
+                INSERT INTO contribution_contracts (contract_address) VALUES (?)
+                ON CONFLICT (contract_address) DO NOTHING
+                """,
+                (contract_address,)
+            )
+        sql.commit()
+    app.logger.warning(f"Fetch contribution contracts finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+
+
+@timer(30)
+def update_contract_statuses(signum):
+    app.logger.warning(f"Update Contract Statuses Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    with app.app_context(), get_sql() as sql:
+        cursor = sql.cursor()
+        cursor.execute("SELECT contract_address FROM contribution_contracts")
+        contract_addresses = cursor.fetchall()
+        app.contributors = {}
+        app.contracts = {}
+
+        for (contract_address,) in contract_addresses:
+            contract_interface = app.service_node_contribution.get_contract_instance(contract_address)
+
+            # Fetch statuses and other details
+            is_finalized = contract_interface.is_finalized()
+            is_cancelled = contract_interface.is_cancelled()
+            bls_pubkey = contract_interface.get_bls_pubkey()
+            service_node_params = contract_interface.get_service_node_params()
+            #contributor_addresses = contract_interface.get_contributor_addresses()
+            total_contributions = contract_interface.total_contribution()
+            contributions = contract_interface.get_individual_contributions()
+
+            app.contracts[contract_address] = {
+                'finalized': is_finalized,
+                'cancelled': is_cancelled,
+                'bls_pubkey': bls_pubkey,
+                'fee': service_node_params['fee'],
+                'service_node_pubkey': service_node_params['serviceNodePubkey'],
+                'service_node_signature': service_node_params['serviceNodeSignature'],
+                'contributions': [
+                    {"address": addr, "amount": amt} for addr, amt in contributions.items()
+                ],
+                'total_contributions': total_contributions,
+            }
+
+            for address in contributions.keys():
+                if address not in app.contributors:
+                    app.contributors[address] = []
+                if contract_address not in app.contributors[address]:
+                    app.contributors[address].append(contract_address)
+
+    app.logger.warning(f"Update Contract Statuses Finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+
+
+@timer(10)
+def update_service_nodes(signum):
+    app.logger.warning(f"Update Service Nodes Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    omq, oxend = omq_connection()
+    app.nodes = get_sns_future(omq, oxend).get()["service_node_states"]
+    app.node_contributors = {}
+    app.logger.warning(f"Update Service Nodes nodes in, looping- {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+
+    for index, node in enumerate(app.nodes):
+        contributors = {c["address"]: c["amount"] for c in node["contributors"]}
+
+        for address in contributors.keys():
+            if address not in app.node_contributors:
+                app.node_contributors[address] = []
+            app.node_contributors[address].append(index)
+
+    app.logger.warning(f"Update Service Nodes finished - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
 @app.route("/info")
 def network_info():
@@ -221,21 +321,99 @@ def network_info():
     return json_response({})
 
 
+
+# export enum NODE_STATE {
+  # RUNNING = 'Running',
+  # AWAITING_CONTRIBUTORS = 'Awaiting Contributors',
+  # CANCELLED = 'Cancelled',
+  # DECOMMISSIONED = 'Decommissioned',
+  # DEREGISTERED = 'Deregistered',
+  # VOLUNTARY_DEREGISTRATION = 'Voluntary Deregistration',
+# }
 @app.route("/nodes/<oxenwallet:oxen_wal>")
 @app.route("/nodes/<ethwallet:eth_wal>")
 def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
-    omq, oxend = omq_connection()
-
     assert oxen_wal is not None or eth_wal is not None
-
     wallet = eth_wal.lower() if eth_wal is not None else oxen_wal
+    sns = []
+    nodes = []
+    formatted_eth_wallet = eth_format(wallet) if eth_wal else None
+    if hasattr(app, 'node_contributors') and wallet in app.node_contributors:
+        for index in app.node_contributors[wallet]:
+            node = app.nodes[index]
+            sns.append(node)
+            balance = {c["address"]: c["amount"] for c in node["contributors"]}.get(wallet, 0)
+            state = 'Decommissioned' if not node["active"] and node["funded"] else 'Running'
+            nodes.append({
+                'balance': balance,
+                'contributors': node["contributors"],
+                'last_uptime_proof': node["last_uptime_proof"],
+                'operator_address': node["operator_address"],
+                'operator_fee': node["portions_for_operator"],
+                'requested_unlock_height': node["requested_unlock_height"],
+                'service_node_pubkey': node["pubkey_ed25519"],
+                'state': state,
+            })
+
+    contracts = []
+    if hasattr(app, 'contributors') and formatted_eth_wallet in app.contributors:
+        for address in app.contributors[formatted_eth_wallet]:
+            details = app.contracts[address]
+            contracts.append({
+                'contract_address': address,
+                'details': details
+            })
+            if details["finalized"]:
+                continue
+            state = 'Cancelled' if details["cancelled"] else 'Awaiting Contributors'
+            nodes.append({
+                'balance': details["contributions"].get(formatted_eth_wallet, 0),
+                'contributors': details["contributions"],
+                'last_uptime_proof': 0,
+                'operator_address': details["contributor_addresses"][0],
+                'operator_fee': details["service_node_params"]["fee"],
+                'requested_unlock_height': 0,
+                'service_node_pubkey': details["service_node_params"]["serviceNodePubkey"],
+                'state': state,
+            })
+
+    return json_response({"service_nodes": sns, "contracts": contracts, "nodes": nodes})
+
+@app.route("/nodes/liquidatable")
+def get_liquidatable_nodes():
+    omq, oxend = omq_connection()
     sns = [
         sn
         for sn in get_sns_future(omq, oxend).get()["service_node_states"]
-        if wallet in (c["address"] for c in sn["contributors"])
+        if sn["is_liquidatable"]
     ]
 
     return json_response({"nodes": sns})
+
+@app.route("/nodes/removeable")
+def get_removable_nodes():
+    omq, oxend = omq_connection()
+    sns = [
+        sn
+        for sn in get_sns_future(omq, oxend).get()["service_node_states"]
+        if sn["is_removeable"]
+    ]
+
+    return json_response({"nodes": sns})
+
+@app.route("/nodes/open")
+def get_contributable_contracts():
+    return json_response({
+        "nodes": [
+            {
+                "contract": addr,
+                **details
+            }
+            for addr, details in app.contracts.items()
+            if not details['finalized'] and not details['cancelled']
+            # FIXME: we should also filter out reserved contracts
+        ]
+    })
 
 
 # Decodes `x` into a bytes of length `length`.  `x` should be hex or base64 encoded, without
@@ -317,7 +495,6 @@ def check_reg_keys_sigs(params):
     signed = (
         params["pubkey_ed25519"]
         + params["pubkey_bls"]
-        + (contract if contract else params["operator"])
     )
 
     try:
@@ -389,7 +566,7 @@ def parse_query_params(params: dict[str, Callable[[str, str], Any]]):
         for k, cb in params.items()
     }
 
-    for k, v in flask.request.args.items(multi=True):
+    for k, v in flask.request.values.items(multi=True):
         found = param_map.get(k)
         if found is None:
             raise ParseUnknownError(k)
@@ -405,13 +582,13 @@ def parse_query_params(params: dict[str, Callable[[str, str], Any]]):
 
     for k, p in param_map.items():
         optional = p[0]
-        if not optional and k not in flask.request.args:
+        if not optional and k not in flask.request.values:
             raise ParseMissingError(k)
 
     return parsed
 
 
-@app.route("/store/<hex64:sn_pubkey>")
+@app.route("/store/<hex64:sn_pubkey>", methods=["GET", "POST"])
 def store_registration(sn_pubkey: bytes):
     """
     Stores (or replaces) the pubkeys/signatures associated with a service node that are needed to

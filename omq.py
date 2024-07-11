@@ -12,7 +12,7 @@ def omq_connection():
         omq.max_message_size = 200*1024*1024
         omq.start()
     if oxend is None:
-        oxend_rpc = config.devnet_rpc if config.devnet else config.testnet_rpc if config.testnet else config.mainnet_rpc
+        oxend_rpc = config.stagenet_rpc if config.stagenet else config.devnet_rpc if config.devnet else config.testnet_rpc if config.testnet else config.mainnet_rpc
         oxend = omq.connect_remote(oxenmq.Address(oxend_rpc))
     return (omq, oxend)
 
