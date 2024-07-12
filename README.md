@@ -26,12 +26,13 @@ install the following packages
 Before running an instance, `oxend` must be running and its address/smart contracts configured in
 `config.py`.
 
-### Development instance
+### Instance
 
-For development it's convenient to run the backend directly in flask (production requires setting up
-a WSGI server TBD):
+It's possible to run the service in flask directly but the timers to poll the smart contracts
+requires WSGI. Both methods are detailed below:
 
     FLASK_APP=sent flask run --reload --debugger
+    uwsgi --http 127.0.0.1:5000 --master -p 4 -w sent --callable app
 
 After the server is running, visit `127.0.0.1:5000/info` to verify that the server is up and
 responding correctly with a payload like the following:
