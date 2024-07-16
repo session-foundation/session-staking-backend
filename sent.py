@@ -743,6 +743,17 @@ def operator_registrations(op: bytes):
             (op,),
         )
         for sn_pubkey, pk_bls, sig_ed, sig_bls, contract, timestamp in cur:
+
+            # TODO: Fixme super janky. I feel like we should just have
+            # hash-tables everywhere and so we should be able to lookup a node
+            # by key and see if it's funded and immediately opt out. We also
+            # need to actually prune the registrations list when it's funded or
+            # cancelled ...
+            for node in app.nodes:
+                if node['pubkey_ed25519'] == sn_pubkey:
+                    if node['active'] is True:
+                        continue
+
             params = {
                 "type": "solo" if contract is None else "contract",
                 "pubkey_ed25519": sn_pubkey,
