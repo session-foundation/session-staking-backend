@@ -715,7 +715,6 @@ def load_registrations(sn_pubkey: bytes):
 
     return json_response({"registrations": regs})
 
-
 @app.route("/registrations/<ethwallet:op>")
 def operator_registrations(op: bytes):
     """
@@ -726,12 +725,12 @@ def operator_registrations(op: bytes):
 
     Fields are the same as the version of this endpoint that takes a SN pubkey.
 
-    Returns a 404 Not Found error if no registrations for the operator are known at all.
+    Returns the JSON response with the 'registrations' for the given 'op'.
     """
 
-    regs = []
+    reg_array   = []
+    op          = bytes.fromhex(op[2:])
 
-    op = bytes.fromhex(op[2:])
     with get_sql() as sql:
         cur = sql.cursor()
         cur.execute(
@@ -757,12 +756,10 @@ def operator_registrations(op: bytes):
             if contract is not None:
                 params["contract"] = contract
 
-            regs.append(params)
+            reg_array.append(params)
 
-    if not regs:
-        return flask.abort(404)
-
-    return json_response({"registrations": regs})
+    result = json_response({'registrations': reg_array})
+    return result
 
 
 def check_stakes(stakes, total, stakers, max_stakers):
