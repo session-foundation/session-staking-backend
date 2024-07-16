@@ -286,10 +286,11 @@ def update_contract_statuses(signum):
             }
 
             for address in contributions.keys():
+                wallet_key = eth_format(address)
                 if address not in app.contributors:
-                    app.contributors[address] = []
-                if contract_address not in app.contributors[address]:
-                    app.contributors[address].append(contract_address)
+                    app.contributors[wallet_key] = []
+                if contract_address not in app.contributors[wallet_key]:
+                    app.contributors[wallet_key].append(contract_address)
 
     app.logger.warning(f"Update Contract Statuses Finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
@@ -297,8 +298,8 @@ def update_contract_statuses(signum):
 @timer(10)
 def update_service_nodes(signum):
     app.logger.warning(f"Update Service Nodes Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-    omq, oxend = omq_connection()
-    app.nodes = get_sns_future(omq, oxend).get()["service_node_states"]
+    omq, oxend            = omq_connection()
+    app.nodes             = get_sns_future(omq, oxend).get()["service_node_states"]
     app.node_contributors = {}
     app.logger.warning(f"Update Service Nodes nodes in, looping- {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
@@ -306,9 +307,13 @@ def update_service_nodes(signum):
         contributors = {c["address"]: c["amount"] for c in node["contributors"]}
 
         for address in contributors.keys():
-            if address not in app.node_contributors:
-                app.node_contributors[address] = []
-            app.node_contributors[address].append(index)
+            wallet_key = address
+            if len(address) == 40:
+                wallet_key = eth_format(wallet_key)
+
+            if wallet_key not in app.node_contributors:
+                app.node_contributors[wallet_key] = []
+            app.node_contributors[wallet_key].append(index)
 
     app.logger.warning(f"Update Service Nodes finished - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
@@ -334,30 +339,30 @@ def network_info():
 @app.route("/nodes/<ethwallet:eth_wal>")
 def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
     assert oxen_wal is not None or eth_wal is not None
-    wallet = eth_wal.lower() if eth_wal is not None else oxen_wal
-    sns = []
+    wallet         = eth_format(eth_wal) if eth_wal is not None else oxen_wal
+
+    sns   = []
     nodes = []
-    formatted_eth_wallet = eth_format(wallet) if eth_wal else None
     if hasattr(app, 'node_contributors') and wallet in app.node_contributors:
         for index in app.node_contributors[wallet]:
-            node = app.nodes[index]
+            node    = app.nodes[index]
             sns.append(node)
             balance = {c["address"]: c["amount"] for c in node["contributors"]}.get(wallet, 0)
-            state = 'Decommissioned' if not node["active"] and node["funded"] else 'Running'
+            state   = 'Decommissioned' if not node["active"] and node["funded"] else 'Running'
             nodes.append({
-                'balance': balance,
-                'contributors': node["contributors"],
-                'last_uptime_proof': node["last_uptime_proof"],
-                'operator_address': node["operator_address"],
-                'operator_fee': node["portions_for_operator"],
+                'balance':                 balance,
+                'contributors':            node["contributors"],
+                'last_uptime_proof':       node["last_uptime_proof"],
+                'operator_address':        node["operator_address"],
+                'operator_fee':            node["portions_for_operator"],
                 'requested_unlock_height': node["requested_unlock_height"],
-                'service_node_pubkey': node["pubkey_ed25519"],
-                'state': state,
+                'service_node_pubkey':     node["pubkey_ed25519"],
+                'state':                   state,
             })
 
     contracts = []
-    if hasattr(app, 'contributors') and formatted_eth_wallet in app.contributors:
-        for address in app.contributors[formatted_eth_wallet]:
+    if hasattr(app, 'contributors') and wallet in app.contributors:
+        for address in app.contributors[wallet]:
             details = app.contracts[address]
             contracts.append({
                 'contract_address': address,
@@ -367,14 +372,14 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 continue
             state = 'Cancelled' if details["cancelled"] else 'Awaiting Contributors'
             nodes.append({
-                'balance': details["contributions"].get(formatted_eth_wallet, 0),
-                'contributors': details["contributions"],
-                'last_uptime_proof': 0,
-                'operator_address': details["contributor_addresses"][0],
-                'operator_fee': details["service_node_params"]["fee"],
+                'balance':                 details["contributions"].get(wallet, 0),
+                'contributors':            details["contributions"],
+                'last_uptime_proof':       0,
+                'operator_address':        details["contributor_addresses"][0],
+                'operator_fee':            details["service_node_params"]["fee"],
                 'requested_unlock_height': 0,
-                'service_node_pubkey': details["service_node_params"]["serviceNodePubkey"],
-                'state': state,
+                'service_node_pubkey':     details["service_node_params"]["serviceNodePubkey"],
+                'state':                   state,
             })
 
     return json_response({"service_nodes": sns, "contracts": contracts, "nodes": nodes})
