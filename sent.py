@@ -749,10 +749,11 @@ def operator_registrations(op: bytes):
             # by key and see if it's funded and immediately opt out. We also
             # need to actually prune the registrations list when it's funded or
             # cancelled ...
-            for node in app.nodes:
-                if node['pubkey_ed25519'] == sn_pubkey:
-                    if node['active'] is True:
-                        continue
+            if hasattr(app, 'node'):
+                for node in app.nodes:
+                    if node['pubkey_ed25519'] == sn_pubkey:
+                        if node['active'] is True:
+                            continue
 
             params = {
                 "type": "solo" if contract is None else "contract",
