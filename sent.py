@@ -755,10 +755,23 @@ def operator_registrations(op: bytes):
             skip_node = False
             if hasattr(app, 'nodes'):
                 for node in app.nodes:
-                    if bytes.fromhex(node['pubkey_ed25519']) == sn_pubkey:
-                        if node['funded']:
-                            skip_node = True
-                            break
+                    # Check if keys are available in the dictionary
+                    if 'pubkey_ed25519' not in node or 'funded' not in node:
+                        print(node)
+                        continue
+
+                    # Extract them
+                    pubkey_ed25519_hex = node['pubkey_ed25519']
+                    is_funded          = node['funded']
+                    pubkey_ed25519     = bytes.fromhex(pubkey_ed25519_hex)
+
+                    # If the key specified in the registration is in our list of
+                    # nodes, and, the node is funded we skip returning the
+                    # registration in the endpoint (because it's registered)
+                    if pubkey_ed25519 == sn_pubkey and is_funded:
+                        skip_node = True
+                        break
+
             if skip_node:
                 continue
 
