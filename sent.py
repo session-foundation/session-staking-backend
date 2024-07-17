@@ -1,61 +1,59 @@
 #!/usr/bin/env python3
 
 import flask
-import babel.dates
-import json
-import sys
-import statistics
 import string
 import time
-import base64
 import oxenc
 import sqlite3
 import re
-from typing import Callable, Any, Union
-from functools import partial
-from base64 import b32encode, b16decode
-from werkzeug.routing import BaseConverter
-from werkzeug.local import LocalProxy
-from pygments import highlight
-from pygments.lexers import JsonLexer
-from pygments.formatters import HtmlFormatter
 import nacl.hash
 import nacl.bindings as sodium
-from nacl.signing import VerifyKey
 import eth_utils
 import subprocess
-import qrcode
-from io import BytesIO
 import config
-from omq import FutureJSON, omq_connection
-from timer import timer
 import datetime
 
-from contracts.reward_rate_pool import RewardRatePoolInterface
-from contracts.service_node_contribution import ContributorContractInterface
-from contracts.service_node_contribution_factory import ServiceNodeContributionFactory
+from typing           import Callable, Any, Union
+from functools        import partial
+from werkzeug.routing import BaseConverter
+from nacl.signing     import VerifyKey
+from omq              import FutureJSON, omq_connection
+from timer            import timer
 
+from contracts.reward_rate_pool                  import RewardRatePoolInterface
+from contracts.service_node_contribution         import ContributorContractInterface
+from contracts.service_node_contribution_factory import ServiceNodeContributionFactory
+from contracts.service_node_rewards              import ServiceNodeRewardsInterface, ServiceNodeRewardsRecipient
 
 # Make a dict of config.* to pass to templating
 conf = {x: getattr(config, x) for x in dir(config) if not x.startswith("__")}
 
-git_rev = subprocess.run(
-    ["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True
-)
-if git_rev.returncode == 0:
-    git_rev = git_rev.stdout.strip()
-else:
-    git_rev = "(unknown)"
+class WalletInfo():
+    def __init__(self):
+        self.rewards          = 0 # Atomic SENT
+        self.contract_rewards = 0
+        self.contract_claimed = 0
 
-def create_app():
-    app = flask.Flask(__name__)
-    app.reward_rate_pool = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
-    app.service_node_contribution_factory = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
-    app.service_node_contribution = ContributorContractInterface(config.PROVIDER_ENDPOINT)
+class App(flask.Flask):
+    def __init__(self):
+        super().__init__(__name__)
 
-    return app
+        self.service_node_rewards              = ServiceNodeRewardsInterface(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_REWARDS_ADDRESS)
+        self.reward_rate_pool                  = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
+        self.service_node_contribution_factory = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
+        self.service_node_contribution         = ContributorContractInterface(config.PROVIDER_ENDPOINT)
 
-app = create_app()
+        self.nodes                             = {}
+        self.node_contributors                 = {}
+        self.contributors                      = {}
+        self.contracts                         = {}
+
+        self.sn_map                            = {} # (Binary SN key_ed25519     -> oxen.rpc.service_node_states dict: info for SN)
+        self.wallet_map                        = {} # (Binary ETH wallet address -> WalletInfo)
+        git_rev                                = subprocess.run(["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True)
+        self.git_rev                           = git_rev.stdout.strip() if git_rev.returncode == 0 else "(unknown)"
+
+app = App()
 
 def get_sql():
     if "db" not in flask.g:
@@ -63,6 +61,9 @@ def get_sql():
 
     return flask.g.sql
 
+def date_now_str() -> str:
+    result = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    return result
 
 # Validates that input is 64 hex bytes and converts it to 32 bytes.
 class Hex64Converter(BaseConverter):
@@ -147,6 +148,9 @@ def get_sns_future(omq, oxend):
         },
     )
 
+def oxen_rpc_get_accrued_earnings(omq, oxend):
+    result = FutureJSON(omq, oxend, 'rpc.get_accrued_earnings', args={'addresses': []})
+    return result
 
 def get_sns(sns_future, info_future):
     info = info_future.get()
@@ -231,7 +235,7 @@ def json_response(vals):
 
 @timer(10, target="worker1")
 def fetch_contribution_contracts(signum):
-    app.logger.warning(f"Fetch contribution contracts start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    app.logger.warning("{} Fetch contribution contracts start".format(date_now_str()))
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
 
@@ -247,12 +251,11 @@ def fetch_contribution_contracts(signum):
                 (contract_address,)
             )
         sql.commit()
-    app.logger.warning(f"Fetch contribution contracts finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-
+    app.logger.warning("{} Fetch contribution contracts finish".format(date_now_str()))
 
 @timer(30)
-def update_contract_statuses(signum):
-    app.logger.warning(f"Update Contract Statuses Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+def fetch_contract_statuses(signum):
+    app.logger.warning("{} Update Contract Statuses Start".format(date_now_str()))
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
         cursor.execute("SELECT contract_address FROM contribution_contracts")
@@ -292,30 +295,73 @@ def update_contract_statuses(signum):
                 if contract_address not in app.contributors[wallet_key]:
                     app.contributors[wallet_key].append(contract_address)
 
-    app.logger.warning(f"Update Contract Statuses Finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-
+    app.logger.warning("{} Update Contract Statuses Finish".format(date_now_str()))
 
 @timer(10)
-def update_service_nodes(signum):
-    app.logger.warning(f"Update Service Nodes Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+def fetch_service_nodes(signum):
+    app.logger.warning("{} Update Service Nodes Start".format(date_now_str()))
     omq, oxend            = omq_connection()
     app.nodes             = get_sns_future(omq, oxend).get()["service_node_states"]
     app.node_contributors = {}
-    app.logger.warning(f"Update Service Nodes nodes in, looping- {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    accrued_earnings_json = oxen_rpc_get_accrued_earnings(omq, oxend).get();
 
     for index, node in enumerate(app.nodes):
         contributors = {c["address"]: c["amount"] for c in node["contributors"]}
 
-        for address in contributors.keys():
-            wallet_key = address
-            if len(address) == 40:
+        for address_key in contributors.keys():
+            wallet_key = address_key
+            if len(address_key) == 40:
                 wallet_key = eth_format(wallet_key)
 
             if wallet_key not in app.node_contributors:
                 app.node_contributors[wallet_key] = []
             app.node_contributors[wallet_key].append(index)
 
-    app.logger.warning(f"Update Service Nodes finished - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    # Reset state and re-populate it
+    app.sn_map = {}
+
+    # Creating (Binary SN key_ed25519 -> oxen.rpc.service_node_states) table
+    for node in app.nodes:
+        service_node_pubkey_hex          = node['service_node_pubkey']
+        service_node_pubkey              = bytes.fromhex(service_node_pubkey_hex)
+        app.sn_map[service_node_pubkey] = node
+
+    # Validate the accrued_earnings JSON result
+    if accrued_earnings_json['status'] != 'OK':
+        app.logger.warning("{} Update SN early exit, accrued earnings request failed: {}".format(
+                         date_now_str(),
+                         accrued_earnings_json))
+        return
+
+    balances_key = 'balances'
+    if balances_key not in accrued_earnings_json:
+        app.logger.warning("{} Update SN early exit, accrued earnings request failed, 'balances' key was missing: {}".format(
+                         date_now_str(),
+                         accrued_earnings_json))
+        return
+
+
+    # Populate (Binary ETH wallet address -> accrued_earnings) table
+    for address_hex, rewards in accrued_earnings_json[balances_key].items():
+        # Ignore non-ethereum addresses (e.g. left oxen rewards, not relevant)
+        trimmed_address_hex = address_hex[2:] if address_hex.startswith('0x') else address_hex
+        if len(trimmed_address_hex) != 40:
+            continue
+
+        # Convert the address to bytes
+        address_key = bytes.fromhex(trimmed_address_hex)
+
+        # Create the info for the wallet if it doesn't exist
+        if address_key not in app.wallet_map:
+            app.wallet_map[address_key] = WalletInfo()
+
+        # We only update the rewards queried from the Oxen network
+        # Contract rewards are loaded on demand and cached.
+        #
+        # TODO It appears that doing the contract call is quite slow.
+        app.wallet_map[address_key].rewards          = rewards
+
+    app.logger.warning("{} Update SN finished".format(date_now_str()))
 
 @app.route("/info")
 def network_info():
@@ -339,15 +385,15 @@ def network_info():
 @app.route("/nodes/<eth_wallet:eth_wal>")
 def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
     assert oxen_wal is not None or eth_wal is not None
-    wallet         = eth_format(eth_wal) if eth_wal is not None else oxen_wal
+    wallet_str  = eth_format(eth_wal) if eth_wal is not None else oxen_wal
 
     sns   = []
     nodes = []
-    if hasattr(app, 'node_contributors') and wallet in app.node_contributors:
-        for index in app.node_contributors[wallet]:
+    if hasattr(app, 'node_contributors') and wallet_str in app.node_contributors:
+        for index in app.node_contributors[wallet_str]:
             node    = app.nodes[index]
             sns.append(node)
-            balance = {c["address"]: c["amount"] for c in node["contributors"]}.get(wallet, 0)
+            balance = {c["address"]: c["amount"] for c in node["contributors"]}.get(wallet_str, 0)
             state   = 'Decommissioned' if not node["active"] and node["funded"] else 'Running'
             nodes.append({
                 'balance':                 balance,
@@ -361,8 +407,8 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
             })
 
     contracts = []
-    if hasattr(app, 'contributors') and wallet in app.contributors:
-        for address in app.contributors[wallet]:
+    if hasattr(app, 'contributors') and wallet_str in app.contributors:
+        for address in app.contributors[wallet_str]:
             details = app.contracts[address]
             contracts.append({
                 'contract_address': address,
@@ -372,7 +418,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 continue
             state = 'Cancelled' if details["cancelled"] else 'Awaiting Contributors'
             nodes.append({
-                'balance':                 details["contributions"].get(wallet, 0),
+                'balance':                 details["contributions"].get(wallet_str, 0),
                 'contributors':            details["contributions"],
                 'last_uptime_proof':       0,
                 'operator_address':        details["contributor_addresses"][0],
@@ -382,7 +428,39 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'state':                   state,
             })
 
-    return json_response({"service_nodes": sns, "contracts": contracts, "nodes": nodes})
+    # Convert the wallet string into bytes if it is a hex (eth address)
+    wallet_key = wallet_str
+    if eth_wal is not None:
+        trimmed_wallet_str = wallet_str[2:] if wallet_str.startswith('0x') else wallet_str
+        wallet_key         = bytes.fromhex(str(trimmed_wallet_str))
+
+    # Retrieve the rewards earned by the wallet
+    wallet_info = app.wallet_map[wallet_key] if wallet_key in app.wallet_map else WalletInfo()
+
+    # Query the amount of rewards committed/claimed currently on the contract
+    #
+    # NOTE: This is done on demand because it appears to be quite slow,
+    # iterating the list of wallets in one shot is quite expensive. The result
+    # is cached in the contract layer to avoid these expensive calls.
+    #
+    # This call is completely bypassed if the wallet is not in our wallet map
+    # which is populated from the Oxen rewards DB. The Oxen DB is the
+    # authoritative list and this prevents an actor from spamming random
+    # wallets to bloat out the runtime memory of the DB.
+    if wallet_info.rewards > 0:
+        contract_recipient                          = app.service_node_rewards.recipients(wallet_key)
+        app.wallet_map[wallet_key].contract_rewards = contract_recipient.rewards
+        app.wallet_map[wallet_key].contract_claimed = contract_recipient.claimed
+
+    # Setup the result
+    result = json_response({
+        "wallet":        vars(wallet_info),
+        "service_nodes": sns,
+        "contracts":     contracts,
+        "nodes":         nodes
+    })
+
+    return result
 
 @app.route("/nodes/liquidatable")
 def get_liquidatable_nodes():
