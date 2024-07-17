@@ -77,17 +77,17 @@ class Hex64Converter(BaseConverter):
         return value.hex()
 
 
-eth_re = "0x[0-9a-fA-F]{40}"
+eth_regex = "0x[0-9a-fA-F]{40}"
 
 
 class EthConverter(BaseConverter):
     def __init__(self, url_map):
         super().__init__(url_map)
-        self.regex = eth_re
+        self.regex = eth_regex
 
 
 b58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-oxen_wallet_re = (
+oxen_wallet_regex = (
     f"T[{b58}]{{96}}" if config.testnet
     else f"dV[{b58}]{{95}}" if config.devnet
     else f"ST[{b58}]{{95}}" if config.stagenet
@@ -98,19 +98,19 @@ oxen_wallet_re = (
 class OxenConverter(BaseConverter):
     def __init__(self, url_map):
         super().__init__(url_map)
-        self.regex = oxen_wallet_re
+        self.regex = oxen_wallet_regex
 
 
 class OxenEthConverter(BaseConverter):
     def __init__(self, url_map):
         super().__init__(url_map)
-        self.regex = f"{eth_re}|{oxen_wallet_re}"
+        self.regex = f"{eth_regex}|{oxen_wallet_regex}"
 
 
-app.url_map.converters["hex64"] = Hex64Converter
-app.url_map.converters["ethwallet"] = EthConverter
-app.url_map.converters["oxenwallet"] = OxenConverter
-app.url_map.converters["eitherwallet"] = OxenEthConverter
+app.url_map.converters["hex64"]         = Hex64Converter
+app.url_map.converters["eth_wallet"]    = EthConverter
+app.url_map.converters["oxen_wallet"]   = OxenConverter
+app.url_map.converters["either_wallet"] = OxenEthConverter
 
 
 def get_sns_future(omq, oxend):
@@ -335,8 +335,8 @@ def network_info():
   # DEREGISTERED = 'Deregistered',
   # VOLUNTARY_DEREGISTRATION = 'Voluntary Deregistration',
 # }
-@app.route("/nodes/<oxenwallet:oxen_wal>")
-@app.route("/nodes/<ethwallet:eth_wal>")
+@app.route("/nodes/<oxen_wallet:oxen_wal>")
+@app.route("/nodes/<eth_wallet:eth_wal>")
 def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
     assert oxen_wal is not None or eth_wal is not None
     wallet         = eth_format(eth_wal) if eth_wal is not None else oxen_wal
@@ -466,7 +466,7 @@ def parse_int_field(k, v, irange):
 
 
 def raw_eth_addr(k, v):
-    if re.fullmatch(eth_re, v):
+    if re.fullmatch(eth_regex, v):
         if not eth_utils.is_address(v):
             raise ParseError(k, "ETH address checksum failed")
         return bytes.fromhex(v[2:])
@@ -715,10 +715,10 @@ def load_registrations(sn_pubkey: bytes):
 
     return json_response({"registrations": regs})
 
-@app.route("/registrations/<ethwallet:op>")
-def operator_registrations(op: bytes):
+@app.route("/registrations/<eth_wallet:operator>")
+def operator_registrations(operator: str):
     """
-    Retrieves stored registration(s) with the given operator.
+    Retrieves stored registration(s) for the given 'operator'.
 
     This returns an array in the "registrations" field containing as many registrations as are
     current stored for the given operator wallet, sorted from most to least recently submitted.
@@ -728,8 +728,8 @@ def operator_registrations(op: bytes):
     Returns the JSON response with the 'registrations' for the given 'op'.
     """
 
-    reg_array   = []
-    op          = bytes.fromhex(op[2:])
+    reg_array      = []
+    operator_bytes = bytes.fromhex(operator[2:])
 
     with get_sql() as sql:
         cur = sql.cursor()
@@ -740,57 +740,19 @@ def operator_registrations(op: bytes):
             WHERE operator = ?
             ORDER BY timestamp DESC
             """,
-            (op,),
+            (operator_bytes,),
         )
-        for sn_pubkey, pk_bls, sig_ed, sig_bls, contract, timestamp in cur:
-
-            # TODO: Fixme super janky. I feel like we should just have
-            # hash-tables everywhere and so we should be able to lookup a node
-            # by key and see if it's funded and immediately opt out. We also
-            # need to actually prune the registrations list when it's funded or
-            # cancelled ...
-            #
-            # Here we check if the node exists and has been funded. If it's been
-            # funded or cancelled then we don't show the registration.
-            skip_node = False
-            if hasattr(app, 'nodes'):
-                for node in app.nodes:
-                    # Check that the keys are available in the dictionary
-                    sn_pubkey_key = 'service_node_pubkey'
-                    funded_key    = 'funded'
-                    if sn_pubkey_key not in node or funded_key not in node:
-                        print("Required key {} or {} was missing from node: {}".format(sn_pubkey_key, funded_key, node))
-                        continue
-
-                    # Extract the key-value pairs
-                    node_sn_pubkey_hex = node[sn_pubkey_key]
-                    is_funded          = node[funded_key]
-                    node_sn_pubkey     = bytes.fromhex(node_sn_pubkey_hex)
-
-                    # If the key specified in the registration is in our list of
-                    # nodes, and, the node is funded we skip returning the
-                    # registration in the endpoint (because it's registered)
-                    if node_sn_pubkey == sn_pubkey and is_funded:
-                        skip_node = True
-                        break
-
-            if skip_node:
-                continue
-
-            params = {
-                "type": "solo" if contract is None else "contract",
-                "pubkey_ed25519": sn_pubkey,
-                "pubkey_bls": pk_bls,
-                "sig_ed25519": sig_ed,
-                "sig_bls": sig_bls,
-                "operator": op,
-                "timestamp": timestamp,
-            }
-
-            if contract is not None:
-                params["contract"] = contract
-
-            reg_array.append(params)
+        for pubkey_ed25519, pubkey_bls, sig_ed25519, sig_bls, contract, timestamp in cur:
+            reg_array.append({
+                "type":           "solo" if contract is None else "contract",
+                "pubkey_ed25519": pubkey_ed25519,
+                "pubkey_bls":     pubkey_bls,
+                "sig_ed25519":    sig_ed25519,
+                "sig_bls":        sig_bls,
+                "operator":       operator,
+                "timestamp":      timestamp,
+                "contract":       "" if contract is None else contract,
+            })
 
     result = json_response({'registrations': reg_array})
     return result
@@ -819,7 +781,6 @@ def check_stakes(stakes, total, stakers, max_stakers):
             )
         remaining_stake -= stakes[i]
         remaining_spots -= 1
-
 
 def format_currency(units: int, decimal: int = 9):
     """
