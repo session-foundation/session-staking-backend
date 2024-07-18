@@ -402,7 +402,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'operator_address':        node["operator_address"],
                 'operator_fee':            node["portions_for_operator"],
                 'requested_unlock_height': node["requested_unlock_height"],
-                'service_node_pubkey':     node["pubkey_ed25519"],
+                'service_node_pubkey':     node["service_node_pubkey"],
                 'state':                   state,
             })
 
