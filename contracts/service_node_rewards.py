@@ -52,8 +52,7 @@ class ServiceNodeRewardsInterface:
         if entry.height >= height:
             return result
 
-        # NOTE: Assuming a block time of 0.25s, we want 3 minutes worth of
-        # blocks.
+        # NOTE: Assuming a block time of 0.25s, we want a 30s block buffer.
         # TODO: This value is copied from oxen-core of the same name
         # `SAFE_BLOCKS`
         SAFE_BLOCKS              = 30 / 0.25;
