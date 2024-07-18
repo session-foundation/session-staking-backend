@@ -403,6 +403,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'operator_fee':            node["portions_for_operator"],
                 'requested_unlock_height': node["requested_unlock_height"],
                 'service_node_pubkey':     node["service_node_pubkey"],
+                'decomm_blocks_remaining': max(node["earned_downtime_blocks"], 0),
                 'state':                   state,
             })
 
