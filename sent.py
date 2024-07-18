@@ -737,7 +737,7 @@ def store_registration(sn_pubkey: bytes):
 
 
 @app.route("/registrations/<hex64:sn_pubkey>")
-def load_registrations(sn_pubkey: bytes):
+def sn_pubkey_registrations(sn_pubkey: bytes) -> flask.Response:
     """
     Retrieves stored registration(s) for the given service node pubkey.
 
@@ -756,11 +756,10 @@ def load_registrations(sn_pubkey: bytes):
     - "sig_bls": the SN BLS pubkey signed registration signature.
     - "timestamp": the unix timestamp when this registration was received (or last updated)
 
-    Returns a 404 Not Found error if no registrations for the pubkey are known at all.
+    Returns the JSON response with the 'registrations' for the given 'sn_pubkey'.
     """
 
-    regs = []
-
+    reg_array = []
     with get_sql() as sql:
         cur = sql.cursor()
         cur.execute(
@@ -772,26 +771,21 @@ def load_registrations(sn_pubkey: bytes):
             """,
             (sn_pubkey,),
         )
-        for pk_bls, sig_ed, sig_bls, op, contract, timestamp in cur:
-            params = {
-                "type": "solo" if contract is None else "contract",
+
+        for pubkey_bls, sig_ed25519, sig_bls, operator, contract, timestamp in cur:
+            reg_array.append({
+                "type":           "solo" if contract is None else "contract",
                 "pubkey_ed25519": sn_pubkey,
-                "pubkey_bls": pk_bls,
-                "sig_ed25519": sig_ed,
-                "sig_bls": sig_bls,
-                "operator": op,
-                "timestamp": timestamp,
-            }
+                "pubkey_bls":     pubkey_bls,
+                "sig_ed25519":    sig_ed25519,
+                "sig_bls":        sig_bls,
+                "operator":       operator,
+                "timestamp":      timestamp,
+                "contract":       "" if contract is None else contract,
+            })
 
-            if contract is not None:
-                params["contract"] = contract
-
-            regs.append(params)
-
-    if not regs:
-        return flask.abort(404)
-
-    return json_response({"registrations": regs})
+    result = json_response({"registrations": reg_array})
+    return result
 
 @app.route("/registrations/<eth_wallet:operator>")
 def operator_registrations(operator: str):
@@ -803,7 +797,7 @@ def operator_registrations(operator: str):
 
     Fields are the same as the version of this endpoint that takes a SN pubkey.
 
-    Returns the JSON response with the 'registrations' for the given 'op'.
+    Returns the JSON response with the 'registrations' for the given 'operator'.
     """
 
     reg_array      = []
