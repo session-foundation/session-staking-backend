@@ -114,7 +114,7 @@ app.url_map.converters["oxen_wallet"]   = OxenConverter
 app.url_map.converters["either_wallet"] = OxenEthConverter
 
 
-def get_sns_future(omq, oxend):
+def get_sns_future(omq, oxend) -> FutureJSON:
     return FutureJSON(
         omq,
         oxend,
@@ -148,8 +148,8 @@ def get_sns_future(omq, oxend):
         },
     )
 
-def oxen_rpc_get_accrued_earnings(omq, oxend):
-    result = FutureJSON(omq, oxend, 'rpc.get_accrued_earnings', args={'addresses': []})
+def oxen_rpc_get_accrued_rewards(omq, oxend) -> FutureJSON:
+    result = FutureJSON(omq, oxend, 'rpc.get_accrued_rewards', args={'addresses': []})
     return result
 
 def get_sns(sns_future, info_future):
@@ -303,7 +303,7 @@ def fetch_service_nodes(signum):
     omq, oxend            = omq_connection()
     app.nodes             = get_sns_future(omq, oxend).get()["service_node_states"]
     app.node_contributors = {}
-    accrued_earnings_json = oxen_rpc_get_accrued_earnings(omq, oxend).get();
+    accrued_rewards_json  = oxen_rpc_get_accrued_rewards(omq, oxend).get();
 
     for index, node in enumerate(app.nodes):
         contributors = {c["address"]: c["amount"] for c in node["contributors"]}
@@ -326,23 +326,23 @@ def fetch_service_nodes(signum):
         service_node_pubkey              = bytes.fromhex(service_node_pubkey_hex)
         app.sn_map[service_node_pubkey] = node
 
-    # Validate the accrued_earnings JSON result
-    if accrued_earnings_json['status'] != 'OK':
-        app.logger.warning("{} Update SN early exit, accrued earnings request failed: {}".format(
+    # Validate the accrued_rewards JSON result
+    if accrued_rewards_json['status'] != 'OK':
+        app.logger.warning("{} Update SN early exit, accrued rewards request failed: {}".format(
                          date_now_str(),
-                         accrued_earnings_json))
+                         accrued_rewards_json))
         return
 
     balances_key = 'balances'
-    if balances_key not in accrued_earnings_json:
-        app.logger.warning("{} Update SN early exit, accrued earnings request failed, 'balances' key was missing: {}".format(
+    if balances_key not in accrued_rewards_json:
+        app.logger.warning("{} Update SN early exit, accrued rewards request failed, 'balances' key was missing: {}".format(
                          date_now_str(),
-                         accrued_earnings_json))
+                         accrued_rewards_json))
         return
 
 
-    # Populate (Binary ETH wallet address -> accrued_earnings) table
-    for address_hex, rewards in accrued_earnings_json[balances_key].items():
+    # Populate (Binary ETH wallet address -> accrued_rewards) table
+    for address_hex, rewards in accrued_rewards_json[balances_key].items():
         # Ignore non-ethereum addresses (e.g. left oxen rewards, not relevant)
         trimmed_address_hex = address_hex[2:] if address_hex.startswith('0x') else address_hex
         if len(trimmed_address_hex) != 40:
@@ -446,7 +446,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
     # This call is completely bypassed if the wallet is not in our wallet map
     # which is populated from the Oxen rewards DB. The Oxen DB is the
     # authoritative list and this prevents an actor from spamming random
-    # wallets to bloat out the runtime memory of the DB.
+    # wallets to bloat out the python runtime memory usage.
     if wallet_info.rewards > 0:
         contract_recipient                          = app.service_node_rewards.recipients(wallet_key)
         app.wallet_map[wallet_key].contract_rewards = contract_recipient.rewards
