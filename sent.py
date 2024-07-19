@@ -212,16 +212,34 @@ TOKEN_NAME = "SENT"
 def get_info():
     omq, oxend = omq_connection()
     info = FutureJSON(omq, oxend, "rpc.get_info").get()
-    return {
+
+    # TODO: get_info is returning the wrong top_block_hash, it isn't _actually_
+    # the top block hash in stagenet atleast. Mainnet looks like it's producing
+    # the correct values.
+    result = {
         **{
             k: v
             for k, v in info.items()
-            if k in ("nettype", "hard_fork", "height", "top_block_hash", "version")
+            if k in ("nettype", "hard_fork", "version")
         },
         "staking_requirement": MAX_STAKE,
         "min_operator_stake": MIN_OP_STAKE,
         "max_stakers": MAX_STAKERS,
     }
+
+    blk_header_result = FutureJSON(omq,
+                                   oxend,
+                                   "rpc.get_last_block_header",
+                                   args={
+                                       'fill_pow_hash': False,
+                                       'get_tx_hashes': False
+                                   }).get()
+
+    blk_header                = blk_header_result['block_header']
+    result['block_timestamp'] = blk_header['timestamp']
+    result['block_height']    = blk_header['height']
+    result['block_hash']      = blk_header['hash']
+    return result
 
 
 def json_response(vals):
