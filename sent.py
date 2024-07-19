@@ -34,24 +34,29 @@ class WalletInfo():
         self.contract_rewards = 0
         self.contract_claimed = 0
 
+def oxen_rpc_get_accrued_rewards(omq, oxend) -> FutureJSON:
+    result = FutureJSON(omq, oxend, 'rpc.get_accrued_rewards', args={'addresses': []})
+    return result
+
 class App(flask.Flask):
     def __init__(self):
         super().__init__(__name__)
 
-        self.service_node_rewards              = ServiceNodeRewardsInterface(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_REWARDS_ADDRESS)
-        self.reward_rate_pool                  = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
-        self.service_node_contribution_factory = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
-        self.service_node_contribution         = ContributorContractInterface(config.PROVIDER_ENDPOINT)
+        self.service_node_rewards                         = ServiceNodeRewardsInterface(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_REWARDS_ADDRESS)
+        self.reward_rate_pool                             = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
+        self.service_node_contribution_factory            = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
+        self.service_node_contribution                    = ContributorContractInterface(config.PROVIDER_ENDPOINT)
 
-        self.nodes                             = {}
-        self.node_contributors                 = {}
-        self.contributors                      = {}
-        self.contracts                         = {}
+        self.nodes                                        = {}
+        self.node_contributors                            = {}
+        self.contributors                                 = {}
+        self.contracts                                    = {}
 
-        self.sn_map                            = {} # (Binary SN key_ed25519     -> oxen.rpc.service_node_states dict: info for SN)
-        self.wallet_map                        = {} # (Binary ETH wallet address -> WalletInfo)
-        git_rev                                = subprocess.run(["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True)
-        self.git_rev                           = git_rev.stdout.strip() if git_rev.returncode == 0 else "(unknown)"
+        self.sn_map                                       = {} # (Binary SN key_ed25519     -> oxen.rpc.service_node_states dict: info for SN)
+        self.wallet_map                                   = {} # (Binary ETH wallet address -> WalletInfo)
+        git_rev                                           = subprocess.run(["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True)
+        self.git_rev                                      = git_rev.stdout.strip() if git_rev.returncode == 0 else "(unknown)"
+        self.oxen_rpc_get_accrued_rewards_endpoint_active = True
 
 app = App()
 
@@ -147,10 +152,6 @@ def get_sns_future(omq, oxend) -> FutureJSON:
             },
         },
     )
-
-def oxen_rpc_get_accrued_rewards(omq, oxend) -> FutureJSON:
-    result = FutureJSON(omq, oxend, 'rpc.get_accrued_rewards', args={'addresses': []})
-    return result
 
 def get_sns(sns_future, info_future):
     info = info_future.get()
@@ -267,13 +268,13 @@ def fetch_contract_statuses(signum):
             contract_interface = app.service_node_contribution.get_contract_instance(contract_address)
 
             # Fetch statuses and other details
-            is_finalized = contract_interface.is_finalized()
-            is_cancelled = contract_interface.is_cancelled()
-            bls_pubkey = contract_interface.get_bls_pubkey()
+            is_finalized        = contract_interface.is_finalized()
+            is_cancelled        = contract_interface.is_cancelled()
+            bls_pubkey          = contract_interface.get_bls_pubkey()
             service_node_params = contract_interface.get_service_node_params()
             #contributor_addresses = contract_interface.get_contributor_addresses()
             total_contributions = contract_interface.total_contribution()
-            contributions = contract_interface.get_individual_contributions()
+            contributions       = contract_interface.get_individual_contributions()
 
             app.contracts[contract_address] = {
                 'finalized': is_finalized,
@@ -303,7 +304,6 @@ def fetch_service_nodes(signum):
     omq, oxend            = omq_connection()
     app.nodes             = get_sns_future(omq, oxend).get()["service_node_states"]
     app.node_contributors = {}
-    accrued_rewards_json  = oxen_rpc_get_accrued_rewards(omq, oxend).get();
 
     for index, node in enumerate(app.nodes):
         contributors = {c["address"]: c["amount"] for c in node["contributors"]}
@@ -322,44 +322,54 @@ def fetch_service_nodes(signum):
 
     # Creating (Binary SN key_ed25519 -> oxen.rpc.service_node_states) table
     for node in app.nodes:
-        service_node_pubkey_hex          = node['service_node_pubkey']
-        service_node_pubkey              = bytes.fromhex(service_node_pubkey_hex)
+        service_node_pubkey_hex         = node['service_node_pubkey']
+        service_node_pubkey             = bytes.fromhex(service_node_pubkey_hex)
         app.sn_map[service_node_pubkey] = node
 
-    # Validate the accrued_rewards JSON result
-    if accrued_rewards_json['status'] != 'OK':
-        app.logger.warning("{} Update SN early exit, accrued rewards request failed: {}".format(
-                         date_now_str(),
-                         accrued_rewards_json))
-        return
+    # Get the accrued rewards values for each wallet
+    if app.oxen_rpc_get_accrued_rewards_endpoint_active:
+        try:
+            # TODO: The staking website's oxend is not updated yet to take this
+            # endpoint. We will deploy the updated backend however, and, once it's
+            # supported we just need to restart the backend to get it running.
+            #
+            # There are other small fixes in the branch that is worth having live.
+            accrued_rewards_json  = oxen_rpc_get_accrued_rewards(omq, oxend).get()
+            if accrued_rewards_json['status'] != 'OK':
+                app.logger.warning("{} Update SN early exit, accrued rewards request failed: {}".format(
+                                 date_now_str(),
+                                 accrued_rewards_json))
+                return
 
-    balances_key = 'balances'
-    if balances_key not in accrued_rewards_json:
-        app.logger.warning("{} Update SN early exit, accrued rewards request failed, 'balances' key was missing: {}".format(
-                         date_now_str(),
-                         accrued_rewards_json))
-        return
+            balances_key = 'balances'
+            if balances_key not in accrued_rewards_json:
+                app.logger.warning("{} Update SN early exit, accrued rewards request failed, 'balances' key was missing: {}".format(
+                                 date_now_str(),
+                                 accrued_rewards_json))
+                return
 
+            # Populate (Binary ETH wallet address -> accrued_rewards) table
+            for address_hex, rewards in accrued_rewards_json[balances_key].items():
+                # Ignore non-ethereum addresses (e.g. left oxen rewards, not relevant)
+                trimmed_address_hex = address_hex[2:] if address_hex.startswith('0x') else address_hex
+                if len(trimmed_address_hex) != 40:
+                    continue
 
-    # Populate (Binary ETH wallet address -> accrued_rewards) table
-    for address_hex, rewards in accrued_rewards_json[balances_key].items():
-        # Ignore non-ethereum addresses (e.g. left oxen rewards, not relevant)
-        trimmed_address_hex = address_hex[2:] if address_hex.startswith('0x') else address_hex
-        if len(trimmed_address_hex) != 40:
-            continue
+                # Convert the address to bytes
+                address_key = bytes.fromhex(trimmed_address_hex)
 
-        # Convert the address to bytes
-        address_key = bytes.fromhex(trimmed_address_hex)
+                # Create the info for the wallet if it doesn't exist
+                if address_key not in app.wallet_map:
+                    app.wallet_map[address_key] = WalletInfo()
 
-        # Create the info for the wallet if it doesn't exist
-        if address_key not in app.wallet_map:
-            app.wallet_map[address_key] = WalletInfo()
-
-        # We only update the rewards queried from the Oxen network
-        # Contract rewards are loaded on demand and cached.
-        #
-        # TODO It appears that doing the contract call is quite slow.
-        app.wallet_map[address_key].rewards          = rewards
+                # We only update the rewards queried from the Oxen network
+                # Contract rewards are loaded on demand and cached.
+                #
+                # TODO It appears that doing the contract call is quite slow.
+                app.wallet_map[address_key].rewards          = rewards
+        except Exception as e:
+            app.oxen_rpc_get_accrued_rewards_endpoint_active = False
+            print("Oxen rpc.get_accrued_rewards endpoint is not available yet, disabling rewards querying until next restart: {}".format(e))
 
     app.logger.warning("{} Update SN finished".format(date_now_str()))
 
