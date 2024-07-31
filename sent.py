@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from ens.utils import ChecksumAddress
 import flask
 import string
 import time
@@ -13,7 +14,7 @@ import subprocess
 import config
 import datetime
 
-from typing           import Callable, Any, Union
+from typing           import Callable, Dict, Any, Union, cast
 from functools        import partial
 from werkzeug.routing import BaseConverter
 from nacl.signing     import VerifyKey
@@ -36,6 +37,13 @@ class WalletInfo():
 
 def oxen_rpc_get_accrued_rewards(omq, oxend) -> FutureJSON:
     result = FutureJSON(omq, oxend, 'rpc.get_accrued_rewards', args={'addresses': []})
+    return result
+
+def oxen_rpc_bls_rewards_request(omq, oxend, eth_address: str) -> FutureJSON:
+    eth_address_for_rpc = eth_address.lower()
+    if eth_address_for_rpc.startswith("0x"):
+        eth_address_for_rpc = eth_address_for_rpc[2:]
+    result = FutureJSON(omq, oxend, 'rpc.bls_rewards_request', args={'address': eth_address_for_rpc})
     return result
 
 class App(flask.Flask):
@@ -388,7 +396,34 @@ def network_info():
     """
     return json_response({})
 
+def get_rewards_dict_for_wallet(eth_wal):
+    wallet_str = eth_format(eth_wal)
 
+    # Convert the wallet string into bytes if it is a hex (eth address)
+    wallet_key = wallet_str
+    if eth_wal is not None:
+        trimmed_wallet_str = wallet_str[2:] if wallet_str.startswith('0x') else wallet_str
+        wallet_key         = bytes.fromhex(str(trimmed_wallet_str))
+
+    # Retrieve the rewards earned by the wallet
+    result = app.wallet_map[wallet_key] if wallet_key in app.wallet_map else WalletInfo()
+
+    # Query the amount of rewards committed/claimed currently on the contract
+    #
+    # NOTE: This is done on demand because it appears to be quite slow,
+    # iterating the list of wallets in one shot is quite expensive. The result
+    # is cached in the contract layer to avoid these expensive calls.
+    #
+    # This call is completely bypassed if the wallet is not in our wallet map
+    # which is populated from the Oxen rewards DB. The Oxen DB is the
+    # authoritative list and this prevents an actor from spamming random
+    # wallets to bloat out the python runtime memory usage.
+    if result.rewards > 0:
+        contract_recipient                          = app.service_node_rewards.recipients(wallet_key)
+        app.wallet_map[wallet_key].contract_rewards = contract_recipient.rewards
+        app.wallet_map[wallet_key].contract_claimed = contract_recipient.claimed
+
+    return result
 
 # export enum NODE_STATE {
   # RUNNING = 'Running',
@@ -446,33 +481,9 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'state':                   state,
             })
 
-    # Convert the wallet string into bytes if it is a hex (eth address)
-    wallet_key = wallet_str
-    if eth_wal is not None:
-        trimmed_wallet_str = wallet_str[2:] if wallet_str.startswith('0x') else wallet_str
-        wallet_key         = bytes.fromhex(str(trimmed_wallet_str))
-
-    # Retrieve the rewards earned by the wallet
-    wallet_info = app.wallet_map[wallet_key] if wallet_key in app.wallet_map else WalletInfo()
-
-    # Query the amount of rewards committed/claimed currently on the contract
-    #
-    # NOTE: This is done on demand because it appears to be quite slow,
-    # iterating the list of wallets in one shot is quite expensive. The result
-    # is cached in the contract layer to avoid these expensive calls.
-    #
-    # This call is completely bypassed if the wallet is not in our wallet map
-    # which is populated from the Oxen rewards DB. The Oxen DB is the
-    # authoritative list and this prevents an actor from spamming random
-    # wallets to bloat out the python runtime memory usage.
-    if wallet_info.rewards > 0:
-        contract_recipient                          = app.service_node_rewards.recipients(wallet_key)
-        app.wallet_map[wallet_key].contract_rewards = contract_recipient.rewards
-        app.wallet_map[wallet_key].contract_claimed = contract_recipient.claimed
-
     # Setup the result
     result = json_response({
-        "wallet":        vars(wallet_info),
+        "wallet":        vars(get_rewards_dict_for_wallet(wallet_str)),
         "service_nodes": sns,
         "contracts":     contracts,
         "nodes":         nodes
@@ -515,6 +526,33 @@ def get_contributable_contracts():
             # FIXME: we should also filter out reserved contracts
         ]
     })
+
+@app.route("/rewards/<eth_wallet:eth_wal>", methods=["GET", "POST"])
+def get_rewards(eth_wal: str):
+    if flask.request.method == "GET":
+        result = json_response({
+            "wallet": vars(get_rewards_dict_for_wallet(eth_wal)),
+        })
+        return result
+
+    if flask.request.method == "POST":
+        omq, oxend = omq_connection();
+        try:
+            response = oxen_rpc_bls_rewards_request(omq, oxend, eth_format(eth_wal)).get()
+            if response is None:
+                return flask.abort(504) # Gateway timeout
+            if 'status' in response:
+                response.pop('status')
+            if 'address' in response:
+                response.pop('address')
+            result = json_response({
+                'bls_rewards_response': response
+            })
+            return result
+        except TimeoutError:
+            return flask.abort(408) # Request timeout
+
+    return flask.abort(405) # Method not allowed
 
 
 # Decodes `x` into a bytes of length `length`.  `x` should be hex or base64 encoded, without
