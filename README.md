@@ -34,6 +34,9 @@ requires WSGI. Both methods are detailed below:
     FLASK_APP=sent flask run --reload --debugger
     uwsgi --http 127.0.0.1:5000 --master -p 4 -w sent --callable app
 
+You may optionally append `--fs-reload sent.py` to the `uwsgi` invocation to
+automatically restart the server when `sent.py` is modified.
+
 After the server is running, visit `127.0.0.1:5000/info` to verify that the server is up and
 responding correctly with a payload like the following:
 
