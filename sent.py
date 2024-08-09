@@ -1,61 +1,71 @@
 #!/usr/bin/env python3
 
+from ens.utils import ChecksumAddress
 import flask
-import babel.dates
-import json
-import sys
-import statistics
 import string
 import time
-import base64
 import oxenc
 import sqlite3
 import re
-from typing import Callable, Any, Union
-from functools import partial
-from base64 import b32encode, b16decode
-from werkzeug.routing import BaseConverter
-from werkzeug.local import LocalProxy
-from pygments import highlight
-from pygments.lexers import JsonLexer
-from pygments.formatters import HtmlFormatter
 import nacl.hash
 import nacl.bindings as sodium
-from nacl.signing import VerifyKey
 import eth_utils
 import subprocess
-import qrcode
-from io import BytesIO
 import config
-from omq import FutureJSON, omq_connection
-from timer import timer
 import datetime
 
-from contracts.reward_rate_pool import RewardRatePoolInterface
-from contracts.service_node_contribution import ContributorContractInterface
-from contracts.service_node_contribution_factory import ServiceNodeContributionFactory
+from typing           import Callable, Dict, Any, Union, cast
+from functools        import partial
+from werkzeug.routing import BaseConverter
+from nacl.signing     import VerifyKey
+from omq              import FutureJSON, omq_connection
+from timer            import timer
 
+from contracts.reward_rate_pool                  import RewardRatePoolInterface
+from contracts.service_node_contribution         import ContributorContractInterface
+from contracts.service_node_contribution_factory import ServiceNodeContributionFactory
+from contracts.service_node_rewards              import ServiceNodeRewardsInterface, ServiceNodeRewardsRecipient
 
 # Make a dict of config.* to pass to templating
 conf = {x: getattr(config, x) for x in dir(config) if not x.startswith("__")}
 
-git_rev = subprocess.run(
-    ["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True
-)
-if git_rev.returncode == 0:
-    git_rev = git_rev.stdout.strip()
-else:
-    git_rev = "(unknown)"
+class WalletInfo():
+    def __init__(self):
+        self.rewards          = 0 # Atomic SENT
+        self.contract_rewards = 0
+        self.contract_claimed = 0
 
-def create_app():
-    app = flask.Flask(__name__)
-    app.reward_rate_pool = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
-    app.service_node_contribution_factory = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
-    app.service_node_contribution = ContributorContractInterface(config.PROVIDER_ENDPOINT)
+def oxen_rpc_get_accrued_rewards(omq, oxend) -> FutureJSON:
+    result = FutureJSON(omq, oxend, 'rpc.get_accrued_rewards', args={'addresses': []})
+    return result
 
-    return app
+def oxen_rpc_bls_rewards_request(omq, oxend, eth_address: str) -> FutureJSON:
+    eth_address_for_rpc = eth_address.lower()
+    if eth_address_for_rpc.startswith("0x"):
+        eth_address_for_rpc = eth_address_for_rpc[2:]
+    result = FutureJSON(omq, oxend, 'rpc.bls_rewards_request', args={'address': eth_address_for_rpc})
+    return result
 
-app = create_app()
+class App(flask.Flask):
+    def __init__(self):
+        super().__init__(__name__)
+
+        self.service_node_rewards              = ServiceNodeRewardsInterface(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_REWARDS_ADDRESS)
+        self.reward_rate_pool                  = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
+        self.service_node_contribution_factory = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
+        self.service_node_contribution         = ContributorContractInterface(config.PROVIDER_ENDPOINT)
+
+        self.nodes                             = {}
+        self.node_contributors                 = {}
+        self.contributors                      = {}
+        self.contracts                         = {}
+
+        self.sn_map                            = {} # (Binary SN key_ed25519     -> oxen.rpc.service_node_states dict: info for SN)
+        self.wallet_map                        = {} # (Binary ETH wallet address -> WalletInfo)
+        git_rev                                = subprocess.run(["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True)
+        self.git_rev                           = git_rev.stdout.strip() if git_rev.returncode == 0 else "(unknown)"
+
+app = App()
 
 def get_sql():
     if "db" not in flask.g:
@@ -63,6 +73,9 @@ def get_sql():
 
     return flask.g.sql
 
+def date_now_str() -> str:
+    result = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    return result
 
 # Validates that input is 64 hex bytes and converts it to 32 bytes.
 class Hex64Converter(BaseConverter):
@@ -77,17 +90,17 @@ class Hex64Converter(BaseConverter):
         return value.hex()
 
 
-eth_re = "0x[0-9a-fA-F]{40}"
+eth_regex = "0x[0-9a-fA-F]{40}"
 
 
 class EthConverter(BaseConverter):
     def __init__(self, url_map):
         super().__init__(url_map)
-        self.regex = eth_re
+        self.regex = eth_regex
 
 
 b58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-oxen_wallet_re = (
+oxen_wallet_regex = (
     f"T[{b58}]{{96}}" if config.testnet
     else f"dV[{b58}]{{95}}" if config.devnet
     else f"ST[{b58}]{{95}}" if config.stagenet
@@ -98,22 +111,22 @@ oxen_wallet_re = (
 class OxenConverter(BaseConverter):
     def __init__(self, url_map):
         super().__init__(url_map)
-        self.regex = oxen_wallet_re
+        self.regex = oxen_wallet_regex
 
 
 class OxenEthConverter(BaseConverter):
     def __init__(self, url_map):
         super().__init__(url_map)
-        self.regex = f"{eth_re}|{oxen_wallet_re}"
+        self.regex = f"{eth_regex}|{oxen_wallet_regex}"
 
 
-app.url_map.converters["hex64"] = Hex64Converter
-app.url_map.converters["ethwallet"] = EthConverter
-app.url_map.converters["oxenwallet"] = OxenConverter
-app.url_map.converters["eitherwallet"] = OxenEthConverter
+app.url_map.converters["hex64"]         = Hex64Converter
+app.url_map.converters["eth_wallet"]    = EthConverter
+app.url_map.converters["oxen_wallet"]   = OxenConverter
+app.url_map.converters["either_wallet"] = OxenEthConverter
 
 
-def get_sns_future(omq, oxend):
+def get_sns_future(omq, oxend) -> FutureJSON:
     return FutureJSON(
         omq,
         oxend,
@@ -146,7 +159,6 @@ def get_sns_future(omq, oxend):
             },
         },
     )
-
 
 def get_sns(sns_future, info_future):
     info = info_future.get()
@@ -207,16 +219,34 @@ TOKEN_NAME = "SENT"
 def get_info():
     omq, oxend = omq_connection()
     info = FutureJSON(omq, oxend, "rpc.get_info").get()
-    return {
+
+    # TODO: get_info is returning the wrong top_block_hash, it isn't _actually_
+    # the top block hash in stagenet atleast. Mainnet looks like it's producing
+    # the correct values.
+    result = {
         **{
             k: v
             for k, v in info.items()
-            if k in ("nettype", "hard_fork", "height", "top_block_hash", "version")
+            if k in ("nettype", "hard_fork", "version")
         },
         "staking_requirement": MAX_STAKE,
         "min_operator_stake": MIN_OP_STAKE,
         "max_stakers": MAX_STAKERS,
     }
+
+    blk_header_result = FutureJSON(omq,
+                                   oxend,
+                                   "rpc.get_last_block_header",
+                                   args={
+                                       'fill_pow_hash': False,
+                                       'get_tx_hashes': False
+                                   }).get()
+
+    blk_header                = blk_header_result['block_header']
+    result['block_timestamp'] = blk_header['timestamp']
+    result['block_height']    = blk_header['height']
+    result['block_hash']      = blk_header['hash']
+    return result
 
 
 def json_response(vals):
@@ -231,7 +261,7 @@ def json_response(vals):
 
 @timer(10, target="worker1")
 def fetch_contribution_contracts(signum):
-    app.logger.warning(f"Fetch contribution contracts start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    app.logger.warning("{} Fetch contribution contracts start".format(date_now_str()))
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
 
@@ -247,12 +277,11 @@ def fetch_contribution_contracts(signum):
                 (contract_address,)
             )
         sql.commit()
-    app.logger.warning(f"Fetch contribution contracts finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-
+    app.logger.warning("{} Fetch contribution contracts finish".format(date_now_str()))
 
 @timer(30)
-def update_contract_statuses(signum):
-    app.logger.warning(f"Update Contract Statuses Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+def fetch_contract_statuses(signum):
+    app.logger.warning("{} Update Contract Statuses Start".format(date_now_str()))
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
         cursor.execute("SELECT contract_address FROM contribution_contracts")
@@ -264,13 +293,13 @@ def update_contract_statuses(signum):
             contract_interface = app.service_node_contribution.get_contract_instance(contract_address)
 
             # Fetch statuses and other details
-            is_finalized = contract_interface.is_finalized()
-            is_cancelled = contract_interface.is_cancelled()
-            bls_pubkey = contract_interface.get_bls_pubkey()
+            is_finalized        = contract_interface.is_finalized()
+            is_cancelled        = contract_interface.is_cancelled()
+            bls_pubkey          = contract_interface.get_bls_pubkey()
             service_node_params = contract_interface.get_service_node_params()
             #contributor_addresses = contract_interface.get_contributor_addresses()
             total_contributions = contract_interface.total_contribution()
-            contributions = contract_interface.get_individual_contributions()
+            contributions       = contract_interface.get_individual_contributions()
 
             app.contracts[contract_address] = {
                 'finalized': is_finalized,
@@ -286,31 +315,78 @@ def update_contract_statuses(signum):
             }
 
             for address in contributions.keys():
+                wallet_key = eth_format(address)
                 if address not in app.contributors:
-                    app.contributors[address] = []
-                if contract_address not in app.contributors[address]:
-                    app.contributors[address].append(contract_address)
+                    app.contributors[wallet_key] = []
+                if contract_address not in app.contributors[wallet_key]:
+                    app.contributors[wallet_key].append(contract_address)
 
-    app.logger.warning(f"Update Contract Statuses Finish - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-
+    app.logger.warning("{} Update Contract Statuses Finish".format(date_now_str()))
 
 @timer(10)
-def update_service_nodes(signum):
-    app.logger.warning(f"Update Service Nodes Start - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-    omq, oxend = omq_connection()
-    app.nodes = get_sns_future(omq, oxend).get()["service_node_states"]
+def fetch_service_nodes(signum):
+    app.logger.warning("{} Update Service Nodes Start".format(date_now_str()))
+    omq, oxend            = omq_connection()
+    app.nodes             = get_sns_future(omq, oxend).get()["service_node_states"]
     app.node_contributors = {}
-    app.logger.warning(f"Update Service Nodes nodes in, looping- {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     for index, node in enumerate(app.nodes):
         contributors = {c["address"]: c["amount"] for c in node["contributors"]}
 
-        for address in contributors.keys():
-            if address not in app.node_contributors:
-                app.node_contributors[address] = []
-            app.node_contributors[address].append(index)
+        for address_key in contributors.keys():
+            wallet_key = address_key
+            if len(address_key) == 40:
+                wallet_key = eth_format(wallet_key)
 
-    app.logger.warning(f"Update Service Nodes finished - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+            if wallet_key not in app.node_contributors:
+                app.node_contributors[wallet_key] = []
+            app.node_contributors[wallet_key].append(index)
+
+    # Reset state and re-populate it
+    app.sn_map = {}
+
+    # Creating (Binary SN key_ed25519 -> oxen.rpc.service_node_states) table
+    for node in app.nodes:
+        service_node_pubkey_hex         = node['service_node_pubkey']
+        service_node_pubkey             = bytes.fromhex(service_node_pubkey_hex)
+        app.sn_map[service_node_pubkey] = node
+
+    # Get the accrued rewards values for each wallet
+    accrued_rewards_json = oxen_rpc_get_accrued_rewards(omq, oxend).get()
+    if accrued_rewards_json['status'] != 'OK':
+        app.logger.warning("{} Update SN early exit, accrued rewards request failed: {}".format(
+                         date_now_str(),
+                         accrued_rewards_json))
+        return
+
+    balances_key = 'balances'
+    if balances_key not in accrued_rewards_json:
+        app.logger.warning("{} Update SN early exit, accrued rewards request failed, 'balances' key was missing: {}".format(
+                         date_now_str(),
+                         accrued_rewards_json))
+        return
+
+    # Populate (Binary ETH wallet address -> accrued_rewards) table
+    for address_hex, rewards in accrued_rewards_json[balances_key].items():
+        # Ignore non-ethereum addresses (e.g. left oxen rewards, not relevant)
+        trimmed_address_hex = address_hex[2:] if address_hex.startswith('0x') else address_hex
+        if len(trimmed_address_hex) != 40:
+            continue
+
+        # Convert the address to bytes
+        address_key = bytes.fromhex(trimmed_address_hex)
+
+        # Create the info for the wallet if it doesn't exist
+        if address_key not in app.wallet_map:
+            app.wallet_map[address_key] = WalletInfo()
+
+        # We only update the rewards queried from the Oxen network
+        # Contract rewards are loaded on demand and cached.
+        #
+        # TODO It appears that doing the contract call is quite slow.
+        app.wallet_map[address_key].rewards = rewards
+
+    app.logger.warning("{} Update SN finished".format(date_now_str()))
 
 @app.route("/info")
 def network_info():
@@ -320,7 +396,34 @@ def network_info():
     """
     return json_response({})
 
+def get_rewards_dict_for_wallet(eth_wal):
+    wallet_str = eth_format(eth_wal)
 
+    # Convert the wallet string into bytes if it is a hex (eth address)
+    wallet_key = wallet_str
+    if eth_wal is not None:
+        trimmed_wallet_str = wallet_str[2:] if wallet_str.startswith('0x') else wallet_str
+        wallet_key         = bytes.fromhex(str(trimmed_wallet_str))
+
+    # Retrieve the rewards earned by the wallet
+    result = app.wallet_map[wallet_key] if wallet_key in app.wallet_map else WalletInfo()
+
+    # Query the amount of rewards committed/claimed currently on the contract
+    #
+    # NOTE: This is done on demand because it appears to be quite slow,
+    # iterating the list of wallets in one shot is quite expensive. The result
+    # is cached in the contract layer to avoid these expensive calls.
+    #
+    # This call is completely bypassed if the wallet is not in our wallet map
+    # which is populated from the Oxen rewards DB. The Oxen DB is the
+    # authoritative list and this prevents an actor from spamming random
+    # wallets to bloat out the python runtime memory usage.
+    if result.rewards > 0:
+        contract_recipient                          = app.service_node_rewards.recipients(wallet_key)
+        app.wallet_map[wallet_key].contract_rewards = contract_recipient.rewards
+        app.wallet_map[wallet_key].contract_claimed = contract_recipient.claimed
+
+    return result
 
 # export enum NODE_STATE {
   # RUNNING = 'Running',
@@ -330,34 +433,35 @@ def network_info():
   # DEREGISTERED = 'Deregistered',
   # VOLUNTARY_DEREGISTRATION = 'Voluntary Deregistration',
 # }
-@app.route("/nodes/<oxenwallet:oxen_wal>")
-@app.route("/nodes/<ethwallet:eth_wal>")
+@app.route("/nodes/<oxen_wallet:oxen_wal>")
+@app.route("/nodes/<eth_wallet:eth_wal>")
 def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
     assert oxen_wal is not None or eth_wal is not None
-    wallet = eth_wal.lower() if eth_wal is not None else oxen_wal
-    sns = []
+    wallet_str  = eth_format(eth_wal) if eth_wal is not None else oxen_wal
+
+    sns   = []
     nodes = []
-    formatted_eth_wallet = eth_format(wallet) if eth_wal else None
-    if hasattr(app, 'node_contributors') and wallet in app.node_contributors:
-        for index in app.node_contributors[wallet]:
-            node = app.nodes[index]
+    if hasattr(app, 'node_contributors') and wallet_str in app.node_contributors:
+        for index in app.node_contributors[wallet_str]:
+            node    = app.nodes[index]
             sns.append(node)
-            balance = {c["address"]: c["amount"] for c in node["contributors"]}.get(wallet, 0)
-            state = 'Decommissioned' if not node["active"] and node["funded"] else 'Running'
+            balance = {c["address"]: c["amount"] for c in node["contributors"]}.get(wallet_str, 0)
+            state   = 'Decommissioned' if not node["active"] and node["funded"] else 'Running'
             nodes.append({
-                'balance': balance,
-                'contributors': node["contributors"],
-                'last_uptime_proof': node["last_uptime_proof"],
-                'operator_address': node["operator_address"],
-                'operator_fee': node["portions_for_operator"],
+                'balance':                 balance,
+                'contributors':            node["contributors"],
+                'last_uptime_proof':       node["last_uptime_proof"],
+                'operator_address':        node["operator_address"],
+                'operator_fee':            node["portions_for_operator"],
                 'requested_unlock_height': node["requested_unlock_height"],
-                'service_node_pubkey': node["pubkey_ed25519"],
-                'state': state,
+                'service_node_pubkey':     node["service_node_pubkey"],
+                'decomm_blocks_remaining': max(node["earned_downtime_blocks"], 0),
+                'state':                   state,
             })
 
     contracts = []
-    if hasattr(app, 'contributors') and formatted_eth_wallet in app.contributors:
-        for address in app.contributors[formatted_eth_wallet]:
+    if hasattr(app, 'contributors') and wallet_str in app.contributors:
+        for address in app.contributors[wallet_str]:
             details = app.contracts[address]
             contracts.append({
                 'contract_address': address,
@@ -367,17 +471,25 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 continue
             state = 'Cancelled' if details["cancelled"] else 'Awaiting Contributors'
             nodes.append({
-                'balance': details["contributions"].get(formatted_eth_wallet, 0),
-                'contributors': details["contributions"],
-                'last_uptime_proof': 0,
-                'operator_address': details["contributor_addresses"][0],
-                'operator_fee': details["service_node_params"]["fee"],
+                'balance':                 details["contributions"].get(wallet_str, 0),
+                'contributors':            details["contributions"],
+                'last_uptime_proof':       0,
+                'operator_address':        details["contributor_addresses"][0],
+                'operator_fee':            details["service_node_params"]["fee"],
                 'requested_unlock_height': 0,
-                'service_node_pubkey': details["service_node_params"]["serviceNodePubkey"],
-                'state': state,
+                'service_node_pubkey':     details["service_node_params"]["serviceNodePubkey"],
+                'state':                   state,
             })
 
-    return json_response({"service_nodes": sns, "contracts": contracts, "nodes": nodes})
+    # Setup the result
+    result = json_response({
+        "wallet":        vars(get_rewards_dict_for_wallet(wallet_str)),
+        "service_nodes": sns,
+        "contracts":     contracts,
+        "nodes":         nodes
+    })
+
+    return result
 
 @app.route("/nodes/liquidatable")
 def get_liquidatable_nodes():
@@ -414,6 +526,33 @@ def get_contributable_contracts():
             # FIXME: we should also filter out reserved contracts
         ]
     })
+
+@app.route("/rewards/<eth_wallet:eth_wal>", methods=["GET", "POST"])
+def get_rewards(eth_wal: str):
+    if flask.request.method == "GET":
+        result = json_response({
+            "wallet": vars(get_rewards_dict_for_wallet(eth_wal)),
+        })
+        return result
+
+    if flask.request.method == "POST":
+        omq, oxend = omq_connection();
+        try:
+            response = oxen_rpc_bls_rewards_request(omq, oxend, eth_format(eth_wal)).get()
+            if response is None:
+                return flask.abort(504) # Gateway timeout
+            if 'status' in response:
+                response.pop('status')
+            if 'address' in response:
+                response.pop('address')
+            result = json_response({
+                'bls_rewards_response': response
+            })
+            return result
+        except TimeoutError:
+            return flask.abort(408) # Request timeout
+
+    return flask.abort(405) # Method not allowed
 
 
 # Decodes `x` into a bytes of length `length`.  `x` should be hex or base64 encoded, without
@@ -461,7 +600,7 @@ def parse_int_field(k, v, irange):
 
 
 def raw_eth_addr(k, v):
-    if re.fullmatch(eth_re, v):
+    if re.fullmatch(eth_regex, v):
         if not eth_utils.is_address(v):
             raise ParseError(k, "ETH address checksum failed")
         return bytes.fromhex(v[2:])
@@ -654,7 +793,7 @@ def store_registration(sn_pubkey: bytes):
 
 
 @app.route("/registrations/<hex64:sn_pubkey>")
-def load_registrations(sn_pubkey: bytes):
+def sn_pubkey_registrations(sn_pubkey: bytes) -> flask.Response:
     """
     Retrieves stored registration(s) for the given service node pubkey.
 
@@ -673,11 +812,10 @@ def load_registrations(sn_pubkey: bytes):
     - "sig_bls": the SN BLS pubkey signed registration signature.
     - "timestamp": the unix timestamp when this registration was received (or last updated)
 
-    Returns a 404 Not Found error if no registrations for the pubkey are known at all.
+    Returns the JSON response with the 'registrations' for the given 'sn_pubkey'.
     """
 
-    regs = []
-
+    reg_array = []
     with get_sql() as sql:
         cur = sql.cursor()
         cur.execute(
@@ -689,44 +827,38 @@ def load_registrations(sn_pubkey: bytes):
             """,
             (sn_pubkey,),
         )
-        for pk_bls, sig_ed, sig_bls, op, contract, timestamp in cur:
-            params = {
-                "type": "solo" if contract is None else "contract",
+
+        for pubkey_bls, sig_ed25519, sig_bls, operator, contract, timestamp in cur:
+            reg_array.append({
+                "type":           "solo" if contract is None else "contract",
                 "pubkey_ed25519": sn_pubkey,
-                "pubkey_bls": pk_bls,
-                "sig_ed25519": sig_ed,
-                "sig_bls": sig_bls,
-                "operator": op,
-                "timestamp": timestamp,
-            }
+                "pubkey_bls":     pubkey_bls,
+                "sig_ed25519":    sig_ed25519,
+                "sig_bls":        sig_bls,
+                "operator":       operator,
+                "timestamp":      timestamp,
+                "contract":       "" if contract is None else contract,
+            })
 
-            if contract is not None:
-                params["contract"] = contract
+    result = json_response({"registrations": reg_array})
+    return result
 
-            regs.append(params)
-
-    if not regs:
-        return flask.abort(404)
-
-    return json_response({"registrations": regs})
-
-
-@app.route("/registrations/<ethwallet:op>")
-def operator_registrations(op: bytes):
+@app.route("/registrations/<eth_wallet:operator>")
+def operator_registrations(operator: str):
     """
-    Retrieves stored registration(s) with the given operator.
+    Retrieves stored registration(s) for the given 'operator'.
 
     This returns an array in the "registrations" field containing as many registrations as are
     current stored for the given operator wallet, sorted from most to least recently submitted.
 
     Fields are the same as the version of this endpoint that takes a SN pubkey.
 
-    Returns a 404 Not Found error if no registrations for the operator are known at all.
+    Returns the JSON response with the 'registrations' for the given 'operator'.
     """
 
-    regs = []
+    reg_array      = []
+    operator_bytes = bytes.fromhex(operator[2:])
 
-    op = bytes.fromhex(op[2:])
     with get_sql() as sql:
         cur = sql.cursor()
         cur.execute(
@@ -736,28 +868,22 @@ def operator_registrations(op: bytes):
             WHERE operator = ?
             ORDER BY timestamp DESC
             """,
-            (op,),
+            (operator_bytes,),
         )
-        for sn_pubkey, pk_bls, sig_ed, sig_bls, contract, timestamp in cur:
-            params = {
-                "type": "solo" if contract is None else "contract",
-                "pubkey_ed25519": sn_pubkey,
-                "pubkey_bls": pk_bls,
-                "sig_ed25519": sig_ed,
-                "sig_bls": sig_bls,
-                "operator": op,
-                "timestamp": timestamp,
-            }
+        for pubkey_ed25519, pubkey_bls, sig_ed25519, sig_bls, contract, timestamp in cur:
+            reg_array.append({
+                "type":           "solo" if contract is None else "contract",
+                "pubkey_ed25519": pubkey_ed25519,
+                "pubkey_bls":     pubkey_bls,
+                "sig_ed25519":    sig_ed25519,
+                "sig_bls":        sig_bls,
+                "operator":       operator,
+                "timestamp":      timestamp,
+                "contract":       "" if contract is None else contract,
+            })
 
-            if contract is not None:
-                params["contract"] = contract
-
-            regs.append(params)
-
-    if not regs:
-        return flask.abort(404)
-
-    return json_response({"registrations": regs})
+    result = json_response({'registrations': reg_array})
+    return result
 
 
 def check_stakes(stakes, total, stakers, max_stakers):
@@ -783,7 +909,6 @@ def check_stakes(stakes, total, stakers, max_stakers):
             )
         remaining_stake -= stakes[i]
         remaining_spots -= 1
-
 
 def format_currency(units: int, decimal: int = 9):
     """
