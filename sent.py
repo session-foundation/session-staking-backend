@@ -65,12 +65,59 @@ class App(flask.Flask):
         git_rev                                = subprocess.run(["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True)
         self.git_rev                           = git_rev.stdout.strip() if git_rev.returncode == 0 else "(unknown)"
 
+        sql = sqlite3.connect(config.sqlite_db)
+        cursor = sql.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS registrations (
+                id INTEGER PRIMARY KEY NOT NULL,
+                pubkey_ed25519 BLOB NOT NULL,
+                pubkey_bls BLOB NOT NULL,
+                sig_ed25519 BLOB NOT NULL,
+                sig_bls BLOB NOT NULL,
+                operator BLOB NOT NULL,
+                contract BLOB,
+                timestamp FLOAT NOT NULL DEFAULT ((julianday('now') - 2440587.5)*86400.0), /* unix epoch */
+
+                CHECK(length(pubkey_ed25519) == 32),
+                CHECK(length(pubkey_bls) == 64),
+                CHECK(length(sig_ed25519) == 64),
+                CHECK(length(sig_bls) == 128),
+                CHECK(length(operator) == 20),
+                CHECK(contract IS NULL OR length(contract) == 20)
+            )
+            """);
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS registrations_operator_idx ON registrations(operator);
+        """)
+
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS registration_pk_multi_idx ON registrations(pubkey_ed25519, contract IS NULL);
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS contribution_contracts (
+                id INTEGER PRIMARY KEY NOT NULL,
+                contract_address TEXT NOT NULL,
+                status INTEGER DEFAULT 1,
+                timestamp FLOAT NOT NULL DEFAULT ((julianday('now') - 2440587.5)*86400.0), /* unix epoch */
+
+                CHECK(length(contract_address) == 42)  -- Assuming Ethereum addresses
+            );
+        """)
+
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS contribution_contract_address_idx ON contribution_contracts(contract_address);
+         """)
+        cursor.close()
+        sql.close()
+
 app = App()
 
 def get_sql():
     if "db" not in flask.g:
         flask.g.sql = sqlite3.connect(config.sqlite_db)
-
     return flask.g.sql
 
 def date_now_str() -> str:
