@@ -46,8 +46,12 @@ def oxen_rpc_bls_rewards_request(omq, oxend, eth_address: str) -> FutureJSON:
     result = FutureJSON(omq, oxend, 'rpc.bls_rewards_request', args={'address': eth_address_for_rpc})
     return result
 
-def oxen_rpc_bls_removal_liquidation(omq, oxend, ed25519_pubkey: bytes, liquidate: bool) -> FutureJSON:
-    result = FutureJSON(omq, oxend, 'rpc.bls_removal_liquidation_request', args={'pubkey': ed25519_pubkey.hex(), 'liquidate': liquidate})
+def oxen_rpc_bls_exit_liquidation(omq, oxend, ed25519_pubkey: bytes, liquidate: bool) -> FutureJSON:
+    result = FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_request', args={'pubkey': ed25519_pubkey.hex(), 'liquidate': liquidate})
+    return result
+
+def oxen_rpc_bls_exit_liquidation_list(omq, oxend) -> FutureJSON:
+    result = FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_list')
     return result
 
 class App(flask.Flask):
@@ -583,17 +587,31 @@ def get_rewards(eth_wal: str):
 
     return flask.abort(405) # Method not allowed
 
-@app.route("/removal/<hex64:ed25519_pubkey>")
-def get_removal(ed25519_pubkey: bytes):
+@app.route("/exit/<hex64:ed25519_pubkey>")
+def get_exit(ed25519_pubkey: bytes):
     omq, oxend = omq_connection();
     try:
-        response = oxen_rpc_bls_removal_liquidation(omq, oxend, ed25519_pubkey, liquidate=False).get()
+        response = oxen_rpc_bls_exit_liquidation(omq, oxend, ed25519_pubkey, liquidate=False).get()
         if response is None:
             return flask.abort(504) # Gateway timeout
         if 'status' in response:
             response.pop('status')
         result = json_response({
-            'bls_removal_response': response
+            'bls_exit_response': response
+        })
+        return result
+    except TimeoutError:
+        return flask.abort(408) # Request timeout
+
+@app.route("/exit_liquidation_list")
+def get_exits_liquidation_list():
+    omq, oxend = omq_connection();
+    try:
+        response = oxen_rpc_bls_exit_liquidation_list(omq, oxend).get()
+        if response is None:
+            return flask.abort(504) # Gateway timeout
+        result = json_response({
+            'bls_exits_liquidation_list_response': response
         })
         return result
     except TimeoutError:
@@ -603,7 +621,7 @@ def get_removal(ed25519_pubkey: bytes):
 def get_liquidation(ed25519_pubkey: bytes):
     omq, oxend = omq_connection();
     try:
-        response = oxen_rpc_bls_removal_liquidation(omq, oxend, ed25519_pubkey, liquidate=True).get()
+        response = oxen_rpc_bls_exit_liquidation(omq, oxend, ed25519_pubkey, liquidate=True).get()
         if response is None:
             return flask.abort(504) # Gateway timeout
         if 'status' in response:
