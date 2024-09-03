@@ -604,14 +604,14 @@ def get_exit(ed25519_pubkey: bytes):
         return flask.abort(408) # Request timeout
 
 @app.route("/exit_liquidation_list")
-def get_exits_liquidation_list():
+def get_exit_liquidation_list():
     omq, oxend = omq_connection();
     try:
         response = oxen_rpc_bls_exit_liquidation_list(omq, oxend).get()
         if response is None:
             return flask.abort(504) # Gateway timeout
         result = json_response({
-            'bls_exits_liquidation_list_response': response
+            'bls_exit_liquidation_list_response': response
         })
         return result
     except TimeoutError:
