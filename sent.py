@@ -46,6 +46,10 @@ def oxen_rpc_bls_rewards_request(omq, oxend, eth_address: str) -> FutureJSON:
     result = FutureJSON(omq, oxend, 'rpc.bls_rewards_request', args={'address': eth_address_for_rpc})
     return result
 
+def oxen_rpc_bls_removal_liquidation(omq, oxend, ed25519_pubkey: bytes, liquidate: bool) -> FutureJSON:
+    result = FutureJSON(omq, oxend, 'rpc.bls_removal_liquidation_request', args={'pubkey': ed25519_pubkey.hex(), 'liquidate': liquidate})
+    return result
+
 class App(flask.Flask):
     def __init__(self):
         super().__init__(__name__)
@@ -538,28 +542,6 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
 
     return result
 
-@app.route("/nodes/liquidatable")
-def get_liquidatable_nodes():
-    omq, oxend = omq_connection()
-    sns = [
-        sn
-        for sn in get_sns_future(omq, oxend).get()["service_node_states"]
-        if sn["is_liquidatable"]
-    ]
-
-    return json_response({"nodes": sns})
-
-@app.route("/nodes/removeable")
-def get_removable_nodes():
-    omq, oxend = omq_connection()
-    sns = [
-        sn
-        for sn in get_sns_future(omq, oxend).get()["service_node_states"]
-        if sn["is_removeable"]
-    ]
-
-    return json_response({"nodes": sns})
-
 @app.route("/nodes/open")
 def get_contributable_contracts():
     return json_response({
@@ -601,6 +583,37 @@ def get_rewards(eth_wal: str):
 
     return flask.abort(405) # Method not allowed
 
+@app.route("/removal/<hex64:ed25519_pubkey>")
+def get_removal(ed25519_pubkey: bytes):
+    omq, oxend = omq_connection();
+    try:
+        response = oxen_rpc_bls_removal_liquidation(omq, oxend, ed25519_pubkey, liquidate=False).get()
+        if response is None:
+            return flask.abort(504) # Gateway timeout
+        if 'status' in response:
+            response.pop('status')
+        result = json_response({
+            'bls_removal_response': response
+        })
+        return result
+    except TimeoutError:
+        return flask.abort(408) # Request timeout
+
+@app.route("/liquidation/<hex64:ed25519_pubkey>")
+def get_liquidation(ed25519_pubkey: bytes):
+    omq, oxend = omq_connection();
+    try:
+        response = oxen_rpc_bls_removal_liquidation(omq, oxend, ed25519_pubkey, liquidate=True).get()
+        if response is None:
+            return flask.abort(504) # Gateway timeout
+        if 'status' in response:
+            response.pop('status')
+        result = json_response({
+            'bls_liquidation_response': response
+        })
+        return result
+    except TimeoutError:
+        return flask.abort(408) # Request timeout
 
 # Decodes `x` into a bytes of length `length`.  `x` should be hex or base64 encoded, without
 # whitespace.  Both regular and "URL-safe" base64 are accepted.  Padding is optional for base64
