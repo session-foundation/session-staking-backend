@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-from ens.utils import ChecksumAddress
 import flask
 import string
 import time
@@ -14,7 +13,7 @@ import subprocess
 import config
 import datetime
 
-from typing           import Callable, Dict, Any, Union, cast
+from typing           import Callable, Any, Union
 from functools        import partial
 from werkzeug.routing import BaseConverter
 from nacl.signing     import VerifyKey
