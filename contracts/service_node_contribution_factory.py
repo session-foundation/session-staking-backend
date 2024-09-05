@@ -39,7 +39,7 @@ class ServiceNodeContributionFactory:
         :param from_block: The block number to start looking for events.
         :return: List of events.
         """
-        return self.contract.events.NewServiceNodeContributionContract.get_logs(fromBlock=from_block)
+        return self.contract.events.NewServiceNodeContributionContract.get_logs(from_block=from_block)
 
     def get_latest_contribution_contract_events(self):
         """
