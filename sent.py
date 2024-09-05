@@ -193,7 +193,7 @@ def get_sns_future(omq, oxend) -> FutureJSON:
                     "service_node_pubkey",
                     "requested_unlock_height",
                     "active",
-                    "bls_key",
+                    "pubkey_bls",
                     "funded",
                     "earned_downtime_blocks",
                     "service_node_version",
