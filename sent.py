@@ -381,10 +381,22 @@ def fetch_contract_statuses(signum):
 def fetch_service_nodes(signum):
     app.logger.warning("{} Update Service Nodes Start".format(date_now_str()))
     omq, oxend            = omq_connection()
-    app.nodes             = get_sns_future(omq, oxend).get()["service_node_states"]
+    nodes                 = get_sns_future(omq, oxend).get()["service_node_states"]
+    # Reset state and re-populate it
+    app.sn_map = {}
     app.node_contributors = {}
 
-    for index, node in enumerate(app.nodes):
+    [ids, bls_keys] = app.service_node_rewards.node_ids()
+    formatted_bls_keys = {f"{x:064x}{y:064x}": node_id for node_id, (x, y) in zip(ids, bls_keys)}
+
+    for index, node in enumerate(nodes):
+        node["node_id"] = formatted_bls_keys.get(node["pubkey_bls"])
+
+        # Creating (Binary SN key_ed25519 -> oxen.rpc.service_node_states) table
+        service_node_pubkey_hex         = node['service_node_pubkey']
+        service_node_pubkey             = bytes.fromhex(service_node_pubkey_hex)
+        app.sn_map[service_node_pubkey] = node
+
         contributors = {c["address"]: c["amount"] for c in node["contributors"]}
 
         for address_key in contributors.keys():
@@ -396,14 +408,7 @@ def fetch_service_nodes(signum):
                 app.node_contributors[wallet_key] = []
             app.node_contributors[wallet_key].append(index)
 
-    # Reset state and re-populate it
-    app.sn_map = {}
-
-    # Creating (Binary SN key_ed25519 -> oxen.rpc.service_node_states) table
-    for node in app.nodes:
-        service_node_pubkey_hex         = node['service_node_pubkey']
-        service_node_pubkey             = bytes.fromhex(service_node_pubkey_hex)
-        app.sn_map[service_node_pubkey] = node
+    app.nodes = nodes
 
     # Get the accrued rewards values for each wallet
     accrued_rewards_json = oxen_rpc_get_accrued_rewards(omq, oxend).get()
@@ -505,6 +510,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'balance':                 balance,
                 'contributors':            node["contributors"],
                 'last_uptime_proof':       node["last_uptime_proof"],
+                'node_id':                 node["node_id"],
                 'operator_address':        node["operator_address"],
                 'operator_fee':            node["portions_for_operator"],
                 'requested_unlock_height': node["requested_unlock_height"],
