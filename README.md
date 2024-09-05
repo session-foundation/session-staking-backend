@@ -8,6 +8,12 @@
 
     python3 -m pip install eth_utils web3
 
+To run the backend on **Ubuntu >= 24.04**:
+```shell
+apt install build-essential python3-pip python3-dev pybind11-dev liboxenc-dev liboxenmq-dev python3.12-venv
+pip install eth_utils web3 PyNaCl Flask uWSGI
+```
+
 Additionally, you need:
 
 **Python bindings for oxen-mq & oxen-encoding**
