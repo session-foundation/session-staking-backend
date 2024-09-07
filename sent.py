@@ -386,11 +386,11 @@ def fetch_service_nodes(signum):
     app.sn_map = {}
     app.node_contributors = {}
 
-    [ids, bls_keys] = app.service_node_rewards.node_ids()
-    formatted_bls_keys = {f"{x:064x}{y:064x}": node_id for node_id, (x, y) in zip(ids, bls_keys)}
+    [ids, bls_keys] = app.service_node_rewards.allServiceNodeIDs()
+    formatted_bls_keys = {f"{x:064x}{y:064x}": contract_id for contract_id, (x, y) in zip(ids, bls_keys)}
 
     for index, node in enumerate(nodes):
-        node["node_id"] = formatted_bls_keys.get(node["pubkey_bls"])
+        node["contract_id"] = formatted_bls_keys.get(node["pubkey_bls"])
 
         # Creating (Binary SN key_ed25519 -> oxen.rpc.service_node_states) table
         service_node_pubkey_hex         = node['service_node_pubkey']
@@ -510,7 +510,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'balance':                 balance,
                 'contributors':            node["contributors"],
                 'last_uptime_proof':       node["last_uptime_proof"],
-                'node_id':                 node["node_id"],
+                'contract_id':                 node["contract_id"],
                 'operator_address':        node["operator_address"],
                 'operator_fee':            node["portions_for_operator"],
                 'requested_unlock_height': node["requested_unlock_height"],

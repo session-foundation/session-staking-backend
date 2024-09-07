@@ -26,7 +26,7 @@ class ServiceNodeRewardsInterface:
         self.contract         = self.web3.eth.contract(address=self.contract_address, abi=abi)
         self.address_map      = {}
 
-    def node_ids(self):
+    def allServiceNodeIDs(self):
         """
         Calls the allServiceNodeIds function to get the `id` and `bls_key` lists
 
