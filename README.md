@@ -4,17 +4,14 @@
 
 ### Pre-requisites
 
-    apt install build-essential python3-dev python3-flask
-
-    python3 -m pip install eth_utils web3
+The `liboxenc-dev` and `liboxenmq-dev` packages require the development headers by setting up the
+[Oxen Deb Repository](https://deb.oxen.io). Follow those instructions then they can be installed with `apt`.
 
 To run the backend on **Ubuntu >= 24.04**:
 ```shell
-apt install build-essential python3-pip python3-dev pybind11-dev liboxenc-dev liboxenmq-dev python3.12-venv
-pip install eth_utils web3 PyNaCl Flask uWSGI
+apt install build-essential python3-pip python3-dev pybind11-dev liboxenc-dev liboxenmq-dev
+python3 -m pip install eth_utils web3 PyNaCl Flask uWSGI
 ```
-
-Additionally, you need:
 
 **Python bindings for oxen-mq & oxen-encoding**
 
@@ -23,16 +20,10 @@ Instructions available at:
 - [oxen-pyoxenc](https://github.com/oxen-io/oxen-pyoxenc)
 - [oxen-pyoxenmq](https://github.com/oxen-io/oxen-pyoxenmq)
 
-These packages require the development headers by setting up the
-[Oxen Deb Repository](https://deb.oxen.io). Follow those instructions and then
-install the following packages
-
-    apt install liboxenc-dev liboxenmq-dev
+### Instance
 
 Before running an instance, `oxend` must be running and its address/smart contracts configured in
 `config.py`.
-
-### Instance
 
 It's possible to run the service in flask directly but the timers to poll the smart contracts
 requires WSGI. Both methods are detailed below:
