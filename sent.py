@@ -500,7 +500,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
 
     sns   = []
     nodes = []
-    if hasattr(app, 'node_contributors') and wallet_str in app.node_contributors:
+    if wallet_str in app.node_contributors:
         for index in app.node_contributors[wallet_str]:
             node    = app.nodes[index]
             sns.append(node)
@@ -510,7 +510,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'balance':                 balance,
                 'contributors':            node["contributors"],
                 'last_uptime_proof':       node["last_uptime_proof"],
-                'contract_id':                 node["contract_id"],
+                'contract_id':             node["contract_id"],
                 'operator_address':        node["operator_address"],
                 'operator_fee':            node["portions_for_operator"],
                 'requested_unlock_height': node["requested_unlock_height"],
@@ -520,7 +520,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
             })
 
     contracts = []
-    if hasattr(app, 'contributors') and wallet_str in app.contributors:
+    if wallet_str in app.contributors:
         for address in app.contributors[wallet_str]:
             details = app.contracts[address]
             contracts.append({
