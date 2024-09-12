@@ -49,8 +49,32 @@ def oxen_rpc_bls_exit_liquidation(omq, oxend, ed25519_pubkey: bytes, liquidate: 
     result = FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_request', args={'pubkey': ed25519_pubkey.hex(), 'liquidate': liquidate})
     return result
 
-def oxen_rpc_bls_exit_liquidation_list(omq, oxend) -> FutureJSON:
-    result = FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_list')
+def get_oxen_rpc_bls_exit_liquidation_list(omq, oxend):
+    result = FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_list').get()
+    if result is not None:
+        for entry in result:
+            # TODO: Unify the naming and fields on the oxen-core side, prefer the names used in
+            # get_service_nodes which is what all end-user consuming applications are using,
+            # consistency is important.
+            if 'bls_pubkey' in entry:
+                entry['pubkey_bls'] = entry['bls_pubkey']
+                entry.pop('bls_pubkey')
+            if 'pubkey' in entry:
+                entry['service_node_pubkey'] = entry['pubkey']
+                entry.pop('pubkey')
+            for item in entry['contributors']:
+                if 'ethereum_address' in item:
+                    item['address'] = item['ethereum_address']
+                    item.pop('ethereum_address')
+                    item.pop('version')
+            if 'operator_address' not in entry:
+                entry['operator_address'] = entry['contributors'][0]['address']
+            if 'state' not in entry:
+                entry['state'] = "Voluntary Deregistration" if entry['type'] == 'exit' else "Deregistered"
+                entry.pop('type')
+            if 'version' in entry:
+                entry.pop('version')
+
     return result
 
 class App(flask.Flask):
@@ -408,7 +432,7 @@ def fetch_service_nodes(signum):
             if len(wallet_key) == 40:
                 wallet_key = eth_format(wallet_key)
 
-            if wallet_key not in app.wallet_to_sn_list:
+            if wallet_key not in wallet_to_sn_list:
                 wallet_to_sn_list[wallet_key] = []
             wallet_to_sn_list[wallet_key].append(index)
 
@@ -418,13 +442,14 @@ def fetch_service_nodes(signum):
     app.sn_list           = sn_info_list
 
     # Get list of SNs that can be liquidated/exited
-    exit_liquidation_list_json = oxen_rpc_bls_exit_liquidation_list(omq, oxend).get()
+    exit_liquidation_list_json = get_oxen_rpc_bls_exit_liquidation_list(omq, oxend)
 
     # Create a mapping from (wallet -> [List of SNs that can be exited for that wallet])
     if exit_liquidation_list_json is not None:
         for entry in exit_liquidation_list_json:
+            entry["contract_id"] = formatted_bls_keys.get(entry["pubkey_bls"])
             for contributor in entry["contributors"]:
-                wallet_str = eth_format(contributor["ethereum_address"])
+                wallet_str = eth_format(contributor["address"])
                 if wallet_str not in app.wallet_to_exitable_sn_list:
                     app.wallet_to_exitable_sn_list[wallet_str] = []
                 app.wallet_to_exitable_sn_list[wallet_str].append(entry)
@@ -538,6 +563,28 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'state':                   state,
             })
 
+    if wallet_str in app.wallet_to_exitable_sn_list:
+        entry   = app.wallet_to_exitable_sn_list[wallet_str]
+
+        for exit_sn in entry:
+            balance = 0
+            for item in exit_sn['contributors']:
+                if eth_format(item['address']) == wallet_str:
+                    balance += item["amount"]
+
+            nodes.append({
+                'balance':                 balance,
+                'contributors':            exit_sn['contributors'],
+                # TODO: This is missing 'last_uptime_proof':       sn_info['last_uptime_proof'],
+                'contract_id':             exit_sn['contract_id'],
+                'operator_address':        exit_sn['operator_address'],
+                # TODO: This is missing 'operator_fee':            sn_info['portions_for_operator'],
+                # TODO: This is missing 'requested_unlock_height': exit_sn['height'] if exit_sn['type'] == 'exit' else 0,
+                'service_node_pubkey':     exit_sn['service_node_pubkey'],
+                'liquidation_height':      exit_sn['liquidation_height'],
+                'state':                   exit_sn['state'],
+            })
+
     contracts = []
     if wallet_str in app.contributors:
         for address in app.contributors[wallet_str]:
@@ -566,7 +613,6 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
         "service_nodes":  sns,
         "contracts":      contracts,
         "nodes":          nodes,
-        "exitable_nodes": app.wallet_to_exitable_sn_list[wallet_str] if wallet_str in app.wallet_to_exitable_sn_list else []
     })
 
     return result
@@ -632,7 +678,7 @@ def get_exit(ed25519_pubkey: bytes):
 def get_exit_liquidation_list():
     omq, oxend = omq_connection();
     try:
-        response = oxen_rpc_bls_exit_liquidation_list(omq, oxend).get()
+        response = get_oxen_rpc_bls_exit_liquidation_list(omq, oxend)
         if response is None:
             return flask.abort(504) # Gateway timeout
         result = json_response({
