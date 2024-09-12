@@ -383,15 +383,13 @@ def fetch_contract_statuses(signum):
 def fetch_service_nodes(signum):
     app.logger.warning("{} Update SN Start".format(date_now_str()))
     omq, oxend            = omq_connection()
-    sn_info_list          = get_sns_future(omq, oxend).get()["service_node_states"]
-    # Reset state and re-populate it
-    app.sn_map            = {}
-    app.wallet_to_sn_list = {}
 
     # Create dictionary of (bls_pubkey -> contract_id)
     [ids, bls_keys]    = app.service_node_rewards.allServiceNodeIDs()
     formatted_bls_keys = {f"{x:064x}{y:064x}": contract_id for contract_id, (x, y) in zip(ids, bls_keys)}
 
+    # Generate new state
+    sn_info_list      = get_sns_future(omq, oxend).get()["service_node_states"]
     wallet_to_sn_list = {}
     sn_map            = {};
     for index, sn_info in enumerate(sn_info_list):
@@ -414,6 +412,7 @@ def fetch_service_nodes(signum):
                 wallet_to_sn_list[wallet_key] = []
             wallet_to_sn_list[wallet_key].append(index)
 
+    # Apply the new state at the end together
     app.sn_map            = sn_map
     app.wallet_to_sn_list = wallet_to_sn_list
     app.sn_list           = sn_info_list
