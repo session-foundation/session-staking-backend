@@ -287,28 +287,23 @@ MIN_OP_STAKE = MAX_STAKE // 4
 MAX_STAKERS = 10
 TOKEN_NAME = "SENT"
 
-
 def get_info():
     omq, oxend = omq_connection()
     info = FutureJSON(omq, oxend, "rpc.get_info").get()
-
-    # TODO: get_info is returning the wrong top_block_hash, it isn't _actually_
-    # the top block hash in stagenet atleast. Mainnet looks like it's producing
-    # the correct values.
     result = {
         **{
             k: v
             for k, v in info.items()
-            if k in ("nettype", "hard_fork", "version")
+            if k in ('nettype', 'hard_fork', 'version')
         },
-        "staking_requirement": MAX_STAKE,
-        "min_operator_stake": MIN_OP_STAKE,
-        "max_stakers": MAX_STAKERS,
+        'staking_requirement': MAX_STAKE,
+        'min_operator_stake': MIN_OP_STAKE,
+        'max_stakers': MAX_STAKERS,
     }
 
     blk_header_result = FutureJSON(omq,
                                    oxend,
-                                   "rpc.get_last_block_header",
+                                   'rpc.get_last_block_header',
                                    args={
                                        'fill_pow_hash': False,
                                        'get_tx_hashes': False
@@ -644,7 +639,7 @@ def get_rewards(eth_wal: str):
             if 'address' in response:
                 response.pop('address')
             result = json_response({
-                'bls_rewards_response': response
+                'response': response
             })
             return result
         except TimeoutError:
@@ -662,7 +657,7 @@ def get_exit(ed25519_pubkey: bytes):
         if 'status' in response:
             response.pop('status')
         result = json_response({
-            'bls_exit_response': response
+            'response': response
         })
         return result
     except TimeoutError:
@@ -670,13 +665,14 @@ def get_exit(ed25519_pubkey: bytes):
 
 @app.route("/exit_liquidation_list")
 def get_exit_liquidation_list():
-    omq, oxend = omq_connection();
     try:
-        response = get_oxen_rpc_bls_exit_liquidation_list(omq, oxend)
-        if response is None:
-            return flask.abort(504) # Gateway timeout
+        array = []
+        for item in app.wallet_to_exitable_sn_list.values():
+            for entry in item:
+                array.append(entry)
+
         result = json_response({
-            'bls_exit_liquidation_list_response': response
+            'response': array
         })
         return result
     except TimeoutError:
@@ -692,7 +688,7 @@ def get_liquidation(ed25519_pubkey: bytes):
         if 'status' in response:
             response.pop('status')
         result = json_response({
-            'bls_liquidation_response': response
+            'response': response
         })
         return result
     except TimeoutError:
