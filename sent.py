@@ -547,6 +547,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'operator_fee':            sn_info["portions_for_operator"],
                 'requested_unlock_height': sn_info["requested_unlock_height"],
                 'service_node_pubkey':     sn_info["service_node_pubkey"],
+                'pubkey_bls':              sn_info["pubkey_bls"],
                 'decomm_blocks_remaining': max(sn_info["earned_downtime_blocks"], 0),
                 'state':                   state,
             })
@@ -570,6 +571,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'requested_unlock_height': exit_sn['info']['requested_unlock_height'],
                 'service_node_pubkey':     exit_sn['service_node_pubkey'],
                 'liquidation_height':      exit_sn['liquidation_height'],
+                'pubkey_bls':              exit_sn['info']['pubkey_bls'],
                 'state':                   exit_sn['state'],
                 'event_height':            exit_sn['height'],
             })
@@ -639,7 +641,7 @@ def get_rewards(eth_wal: str):
             if 'address' in response:
                 response.pop('address')
             result = json_response({
-                'response': response
+                'result': response
             })
             return result
         except TimeoutError:
@@ -657,7 +659,7 @@ def get_exit(ed25519_pubkey: bytes):
         if 'status' in response:
             response.pop('status')
         result = json_response({
-            'response': response
+            'result': response
         })
         return result
     except TimeoutError:
@@ -672,7 +674,7 @@ def get_exit_liquidation_list():
                 array.append(entry)
 
         result = json_response({
-            'response': array
+            'result': array
         })
         return result
     except TimeoutError:
@@ -688,7 +690,7 @@ def get_liquidation(ed25519_pubkey: bytes):
         if 'status' in response:
             response.pop('status')
         result = json_response({
-            'response': response
+            'result': response
         })
         return result
     except TimeoutError:
