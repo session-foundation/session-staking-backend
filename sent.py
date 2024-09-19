@@ -52,6 +52,8 @@ def oxen_rpc_bls_exit_liquidation(omq, oxend, ed25519_pubkey: bytes, liquidate: 
 def get_oxen_rpc_bls_exit_liquidation_list(omq, oxend):
     result = FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_list').get()
     if result is not None:
+        # Create dictionary of (bls_pubkey -> contract_id)
+        pubkey_bls_to_contract_id_map = get_service_node_contract_ids()
         for entry in result:
             # TODO: Unify the naming and fields on the oxen-core side, prefer the names used in
             # get_service_nodes which is what all end-user consuming applications are using,
