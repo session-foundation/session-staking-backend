@@ -57,7 +57,9 @@ def get_oxen_rpc_bls_exit_liquidation_list(omq, oxend):
             # get_service_nodes which is what all end-user consuming applications are using,
             # consistency is important.
             if 'bls_public_key' in entry['info']:
-                entry['info']['pubkey_bls'] = entry['info']['bls_public_key']
+                bls_pubkey = entry['info']['bls_public_key']
+                entry['info']['pubkey_bls'] = bls_pubkey
+                entry['info']['contract_id'] = pubkey_bls_to_contract_id_map.get(bls_pubkey)
                 entry['info'].pop('bls_public_key')
             for item in entry['info']['contributors']:
                 item.pop('version')
@@ -390,22 +392,26 @@ def fetch_contract_statuses(signum):
 
     app.logger.warning("{} Update Contract Statuses Finish".format(date_now_str()))
 
+def get_service_node_contract_ids():
+    # Create dictionary of (bls_pubkey -> contract_id)
+    [ids, bls_keys]    = app.service_node_rewards.allServiceNodeIDs()
+    return {f"{x:064x}{y:064x}": contract_id for contract_id, (x, y) in zip(ids, bls_keys)}
+
 @timer(10)
 def fetch_service_nodes(signum):
     app.logger.warning("{} Update SN Start".format(date_now_str()))
     omq, oxend            = omq_connection()
 
     # Create dictionary of (bls_pubkey -> contract_id)
-    [ids, bls_keys]    = app.service_node_rewards.allServiceNodeIDs()
-    formatted_bls_keys = {f"{x:064x}{y:064x}": contract_id for contract_id, (x, y) in zip(ids, bls_keys)}
+    pubkey_bls_to_contract_id_map = get_service_node_contract_ids()
 
     # Generate new state
     sn_info_list      = get_sns_future(omq, oxend).get()["service_node_states"]
     wallet_to_sn_list = {}
-    sn_map            = {};
+    sn_map            = {}
     for index, sn_info in enumerate(sn_info_list):
         # Add the SN contract ID to the sn_info dict
-        sn_info["contract_id"] = formatted_bls_keys.get(sn_info["pubkey_bls"])
+        sn_info["contract_id"] = pubkey_bls_to_contract_id_map.get(sn_info["pubkey_bls"])
 
         # Creating (Binary SN key_ed25519 -> oxen.rpc.service_node_states) table
         service_node_pubkey_hex     = sn_info['service_node_pubkey']
@@ -435,7 +441,7 @@ def fetch_service_nodes(signum):
     app.wallet_to_exitable_sn_list = {}
     if exit_liquidation_list_json is not None:
         for entry in exit_liquidation_list_json:
-            entry["contract_id"] = formatted_bls_keys.get(entry['info']["pubkey_bls"])
+            entry["contract_id"] = pubkey_bls_to_contract_id_map.get(entry['info']["pubkey_bls"])
             for contributor in entry['info']["contributors"]:
                 wallet_str = eth_format(contributor["address"])
                 if wallet_str not in app.wallet_to_exitable_sn_list:
