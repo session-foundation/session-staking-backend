@@ -25,6 +25,8 @@ from contracts.service_node_contribution         import ContributorContractInter
 from contracts.service_node_contribution_factory import ServiceNodeContributionFactory
 from contracts.service_node_rewards              import ServiceNodeRewardsInterface, ServiceNodeRewardsRecipient
 
+TOKEN_NAME = "SENT"
+
 # Make a dict of config.* to pass to templating
 conf = {x: getattr(config, x) for x in dir(config) if not x.startswith("__")}
 
@@ -113,7 +115,7 @@ class App(flask.Flask):
                 CHECK(length(operator) == 20),
                 CHECK(contract IS NULL OR length(contract) == 20)
             )
-            """);
+            """)
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS registrations_operator_idx ON registrations(operator);
@@ -283,25 +285,39 @@ def hexify(container):
             hexify(v)
 
 
-# FIXME: this staking requirement value is just a placeholder for now.  We probably also want to
-# expose and retrieve this from oxend rather than hard coding it here.
-MAX_STAKE = 120_000000000
-MIN_OP_STAKE = MAX_STAKE // 4
-MAX_STAKERS = 10
-TOKEN_NAME = "SENT"
+
+def get_staking_requirements():
+    omq, oxend = omq_connection()
+    result = FutureJSON(omq, oxend, "rpc.get_staking_requirement").get()
+
+    staking_requirement = result['staking_requirement']
+
+    return {
+        'staking_requirement': staking_requirement,
+        'min_operator_stake': staking_requirement // 4,
+        # TODO: expose and retrieve this from oxend rather than hard coding it here.
+        'max_stakers': 10
+    }
+
 
 def get_info():
     omq, oxend = omq_connection()
     info = FutureJSON(omq, oxend, "rpc.get_info").get()
+    staking_requirements = get_staking_requirements()
+
+    # TODO: get_info is returning the wrong top_block_hash, it isn't _actually_
+    # the top block hash in stagenet atleast. Mainnet looks like it's producing
+    # the correct values.
     result = {
         **{
             k: v
             for k, v in info.items()
             if k in ('nettype', 'hard_fork', 'version')
         },
-        'staking_requirement': MAX_STAKE,
-        'min_operator_stake': MIN_OP_STAKE,
-        'max_stakers': MAX_STAKERS,
+        **{
+            k: v
+            for k, v in staking_requirements.items()
+        },
     }
 
     blk_header_result = FutureJSON(omq,
@@ -648,7 +664,7 @@ def get_rewards(eth_wal: str):
         return result
 
     if flask.request.method == "POST":
-        omq, oxend = omq_connection();
+        omq, oxend = omq_connection()
         try:
             response = oxen_rpc_bls_rewards_request(omq, oxend, eth_format(eth_wal)).get()
             if response is None:
@@ -668,7 +684,7 @@ def get_rewards(eth_wal: str):
 
 @app.route("/exit/<hex64:ed25519_pubkey>")
 def get_exit(ed25519_pubkey: bytes):
-    omq, oxend = omq_connection();
+    omq, oxend = omq_connection()
     try:
         response = oxen_rpc_bls_exit_liquidation(omq, oxend, ed25519_pubkey, liquidate=False).get()
         if response is None:
@@ -699,7 +715,7 @@ def get_exit_liquidation_list():
 
 @app.route("/liquidation/<hex64:ed25519_pubkey>")
 def get_liquidation(ed25519_pubkey: bytes):
-    omq, oxend = omq_connection();
+    omq, oxend = omq_connection()
     try:
         response = oxen_rpc_bls_exit_liquidation(omq, oxend, ed25519_pubkey, liquidate=True).get()
         if response is None:
@@ -1127,7 +1143,8 @@ def error_response(code, **err):
             # For a solo node that doesn't contribute the exact requirement
             msg = f"Invalid operator stake: exactly {format_currency(err['required'])} {TOKEN_NAME} is required for a solo node"
         case "insufficient_op_stake":
-            msg = f"Insufficient operator stake: at least {format_currency(err['minimum'])} ({err['minimum'] / MAX_STAKE * 100}%) is required"
+            staking_requirements = get_staking_requirements()
+            msg = f"Insufficient operator stake: at least {format_currency(err['minimum'])} ({err['minimum'] / staking_requirements['staking_requirement'] * 100}%) is required"
         case "invalid_contract_addr":
             msg = "Invalid contract address"
         case "invalid_res_addr":
@@ -1182,8 +1199,11 @@ def validate_registration():
     indicating the error that was detected.  See `error_response` for details.
     """
 
-    stakers = []
-    stakes = []
+    staking_requirements = get_staking_requirements()
+
+    max_stake = staking_requirements['staking_requirement']
+    min_operator_stake = staking_requirements['min_operator_stake']
+    max_stakers = staking_requirements['max_stakers']
 
     try:
         params = parse_query_params(
@@ -1274,22 +1294,22 @@ def validate_registration():
 
     total_reserved = params["stake"] + sum(stake for _, stake in reserved)
     if solo:
-        if total_reserved != MAX_STAKE:
+        if total_reserved != max_stake:
             return error_response(
-                "wrong_op_stake", stake=total_reserved, required=MAX_STAKE
+                "wrong_op_stake", stake=total_reserved, required=max_stake
             )
     else:
-        if params["stake"] < MIN_OP_STAKE:
+        if params["stake"] < min_operator_stake:
             return error_response(
-                "insufficient_op_stake", stake=params["stake"], minimum=MIN_OP_STAKE
+                "insufficient_op_stake", stake=params["stake"], minimum=min_operator_stake
             )
-        if total_reserved > MAX_STAKE:
-            return error_response("too_much", total=total_reserved, maximum=MAX_STAKE)
-        if 1 + len(reserved) > MAX_STAKERS:
-            return error_response("too_many", max_contributors=MAX_STAKERS - 1)
+        if total_reserved > max_stake:
+            return error_response("too_much", total=total_reserved, maximum=max_stake)
+        if 1 + len(reserved) > max_stakers:
+            return error_response("too_many", max_contributors=max_stakers - 1)
 
-        remaining_stake = MAX_STAKE - params["stake"]
-        remaining_spots = MAX_STAKERS - 1
+        remaining_stake = max_stake - params["stake"]
+        remaining_spots = max_stakers - 1
 
         for i, (addr, amt) in enumerate(reserved):
             # integer math ceiling:
