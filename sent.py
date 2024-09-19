@@ -66,8 +66,7 @@ def get_oxen_rpc_bls_exit_liquidation_list(omq, oxend):
             for item in entry['info']['contributors']:
                 item.pop('version')
             if 'state' not in entry:
-                entry['state'] = "Voluntary Deregistration" if entry['type'] == 'exit' else "Deregistered"
-                entry.pop('type')
+                entry['state'] = "Exited" if entry['type'] == 'exit' else "Deregistered"
             if 'version' in entry:
                 entry.pop('version')
 
@@ -525,12 +524,13 @@ def get_rewards_dict_for_wallet(eth_wal):
     return result
 
 # export enum NODE_STATE {
-  # RUNNING = 'Running',
-  # AWAITING_CONTRIBUTORS = 'Awaiting Contributors',
-  # CANCELLED = 'Cancelled',
-  # DECOMMISSIONED = 'Decommissioned',
-  # DEREGISTERED = 'Deregistered',
-  # VOLUNTARY_DEREGISTRATION = 'Voluntary Deregistration',
+#   RUNNING = 'Running',
+#   AWAITING_CONTRIBUTORS = 'Awaiting Contributors',
+#   CANCELLED = 'Cancelled',
+#   DECOMMISSIONED = 'Decommissioned',
+#   DEREGISTERED = 'Deregistered',
+#   AWAITING_EXIT = 'Awaiting Exit',
+#   EXITED = 'Exited',
 # }
 @app.route("/nodes/<oxen_wallet:oxen_wal>")
 @app.route("/nodes/<eth_wallet:eth_wal>")
@@ -568,6 +568,15 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
             for item in exit_sn['info']['contributors']:
                 if eth_format(item['address']) == wallet_str:
                     balance += item["amount"]
+
+
+            if 'type' in exit_sn:
+                if exit_sn['type'] == 'exit':
+                    exit_sn['state'] = "Exited" if exit_sn['contract_id'] is None else "Awaiting Exit"
+                elif exit_sn['type'] == 'deregistered':
+                    exit_sn['state'] = "Deregistered"
+                exit_sn.pop('type')
+
 
             nodes.append({
                 'balance':                 balance,
