@@ -215,6 +215,7 @@ def get_sns_future(omq, oxend) -> FutureJSON:
                 for x in (
                     "service_node_pubkey",
                     "requested_unlock_height",
+                    "last_reward_block_height",
                     "active",
                     "pubkey_bls",
                     "funded",
@@ -570,6 +571,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'operator_address':        sn_info["operator_address"],
                 'operator_fee':            sn_info["portions_for_operator"],
                 'requested_unlock_height': sn_info["requested_unlock_height"],
+                'last_reward_block_height': sn_info["last_reward_block_height"],
                 'service_node_pubkey':     sn_info["service_node_pubkey"],
                 'pubkey_bls':              sn_info["pubkey_bls"],
                 'decomm_blocks_remaining': max(sn_info["earned_downtime_blocks"], 0),
@@ -602,6 +604,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
                 'operator_address':        exit_sn['info']['operator_address'],
                 'operator_fee':            exit_sn['info']['portions_for_operator'],
                 'requested_unlock_height': exit_sn['info']['requested_unlock_height'],
+                'last_reward_block_height':exit_sn['info']['last_reward_block_height'],
                 'service_node_pubkey':     exit_sn['service_node_pubkey'],
                 'liquidation_height':      exit_sn['liquidation_height'],
                 'pubkey_bls':              exit_sn['info']['pubkey_bls'],
