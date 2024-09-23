@@ -293,6 +293,37 @@ def get_staking_requirements():
     }
 
 
+def get_timers_hours(network_type: str):
+    match network_type:
+        case 'testnet' | 'stagenet' | 'devnet' | 'localdev' | 'fakechain':
+            return {
+                'deregistration_lock_duration_hours': 48,
+                'unlock_duration_hours': 24,
+            }
+        case 'mainnet':
+            return {
+                'deregistration_lock_duration_hours': 30 * 24,
+                'unlock_duration_hours': 15 * 24,
+            }
+        case _:
+            raise ValueError(f"Unknown network type {network_type}")
+
+
+@app.route("/timers/<network_type>")
+def fetch_network_timers(network_type: str = None):
+    if network_type is None:
+        return json_response(get_timers_hours(get_info().get('nettype')))
+    else:
+        return json_response(get_timers_hours(network_type))
+
+
+BLOCKS_PER_HOUR = 120
+
+
+def blocks_in(hours: int):
+    return int(hours * BLOCKS_PER_HOUR)
+
+
 def get_info():
     omq, oxend = omq_connection()
     info = FutureJSON(omq, oxend, "rpc.get_info").get()
