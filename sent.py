@@ -48,31 +48,10 @@ def oxen_rpc_bls_rewards_request(omq, oxend, eth_address: str) -> FutureJSON:
     return result
 
 def oxen_rpc_bls_exit_liquidation(omq, oxend, ed25519_pubkey: bytes, liquidate: bool) -> FutureJSON:
-    result = FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_request', args={'pubkey': ed25519_pubkey.hex(), 'liquidate': liquidate})
-    return result
+    return FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_request', args={'pubkey': ed25519_pubkey.hex(), 'liquidate': liquidate})
 
 def get_oxen_rpc_bls_exit_liquidation_list(omq, oxend):
-    result = FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_list').get()
-    if result is not None:
-        # Create dictionary of (bls_pubkey -> contract_id)
-        pubkey_bls_to_contract_id_map = get_service_node_contract_ids()
-        for entry in result:
-            # TODO: Unify the naming and fields on the oxen-core side, prefer the names used in
-            # get_service_nodes which is what all end-user consuming applications are using,
-            # consistency is important.
-            if 'bls_public_key' in entry['info']:
-                bls_pubkey = entry['info']['bls_public_key']
-                entry['info']['pubkey_bls'] = bls_pubkey
-                entry['info']['contract_id'] = pubkey_bls_to_contract_id_map.get(bls_pubkey)
-                entry['info'].pop('bls_public_key')
-            for item in entry['info']['contributors']:
-                item.pop('version')
-            if 'state' not in entry:
-                entry['state'] = "Exited" if entry['type'] == 'exit' else "Deregistered"
-            if 'version' in entry:
-                entry.pop('version')
-
-    return result
+    return FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_list')
 
 class App(flask.Flask):
     def __init__(self):
@@ -84,9 +63,19 @@ class App(flask.Flask):
         self.service_node_contribution_factory = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
         self.service_node_contribution         = ContributorContractInterface(config.PROVIDER_ENDPOINT)
 
-        self.sn_list                           = {} # Stores Oxen RPC get_service_nodes result (augmented w/ extra metadata like SN contract ID)
-        self.wallet_to_sn_list                 = {} # (Wallet address -> List of SN's they own or contribute to)
-        self.wallet_to_exitable_sn_list        = {} # (Wallet address -> List of SN's they can liquidate/exit)
+        self.bls_pubkey_to_contract_id_map: dict[str, int]      = {} # (BLS public key -> contract_id)
+
+        self.wallet_to_sn_map: dict[ChecksumAddress, set[int]]  = {} # (0x wallet address -> Set of contract_id's of stakes they are contributors to)
+        self.contract_id_to_sn_map: dict[int, dict]             = {} # (contract_id -> Oxen RPC get_service_nodes result (augmented w/ extra metadata like SN contract ID))
+
+        self.wallet_to_exitable_sn_map: dict[ChecksumAddress, set[int]]         = {} # (0x wallet address -> Set of contract_id's of SN's they can liquidate/exit)
+        self.contract_id_to_exitable_sn_map: dict[int, dict]                    = {} # (contract_id -> SNInfo)
+
+        self.tmp_db_trigger_wallet_addresses: set[ChecksumAddress]              = set() # Wallet addresses that have triggered a db get between scheduled times
+        self.tracked_wallet_addresses: set[ChecksumAddress]                     = set() # Tracked wallet addresses to fetch data from the db for
+        self.wallet_to_historical_stakes_map: dict[ChecksumAddress, set[int]]   = {} # (0x wallet address -> Set of contract_ids)
+        self.contract_id_to_historical_stakes_map: dict[int, Stake]             = {} # (contract_id -> Stake Info)
+
         self.contributors                      = {}
         self.contracts                         = {}
 
@@ -426,46 +415,69 @@ def fetch_service_nodes(signum):
 
     # Generate new state
     sn_info_list      = get_sns_future(omq, oxend).get()["service_node_states"]
-    wallet_to_sn_list = {}
+    wallet_to_sn_map  = {}
     sn_map            = {}
-    for index, sn_info in enumerate(sn_info_list):
-        # Add the SN contract ID to the sn_info dict
-        sn_info["contract_id"] = pubkey_bls_to_contract_id_map.get(sn_info["pubkey_bls"])
 
-        # Creating (Binary SN key_ed25519 -> oxen.rpc.service_node_states) table
-        service_node_pubkey_hex     = sn_info['service_node_pubkey']
-        service_node_pubkey         = bytes.fromhex(service_node_pubkey_hex)
-        sn_map[service_node_pubkey] = sn_info
+    if len(app.bls_pubkey_to_contract_id_map) == 0:
+        app.logger.warning("{} bls_pubkey_to_contract_id_map is empty, fetching contract ids".format(date_now_str()))
+        update_service_node_contract_ids(None)
+
+    for sn_info in sn_info_list:
+        # Add the SN contract ID to the sn_info dict
+        contract_id = app.bls_pubkey_to_contract_id_map.get(sn_info["pubkey_bls"])
+        sn_info["contract_id"] = contract_id
+        sn_map[contract_id] = sn_info
 
         contributors = {c["address"]: c["amount"] for c in sn_info["contributors"]}
 
         # Creating (wallet -> [SN's the wallet owns]) table
         for wallet_key in contributors.keys():
-            if len(wallet_key) == 40:
-                wallet_key = eth_format(wallet_key)
+            formatted_wallet_key = eth_format(wallet_key) if len(wallet_key) == 40 else wallet_key
+            wallet_to_sn_map.setdefault(formatted_wallet_key, []).append(contract_id)
 
-            if wallet_key not in wallet_to_sn_list:
-                wallet_to_sn_list[wallet_key] = []
-            wallet_to_sn_list[wallet_key].append(index)
-
-    # Apply the new state at the end together
-    app.sn_map            = sn_map
-    app.wallet_to_sn_list = wallet_to_sn_list
-    app.sn_list           = sn_info_list
+    # Apply the new state if there are any
+    if len(sn_map) > 0:
+        app.contract_id_to_sn_map     = sn_map
+        app.wallet_to_sn_map          = wallet_to_sn_map
 
     # Get list of SNs that can be liquidated/exited
-    exit_liquidation_list_json = get_oxen_rpc_bls_exit_liquidation_list(omq, oxend)
+    exit_liquidation_list_json = get_oxen_rpc_bls_exit_liquidation_list(omq, oxend).get()
 
-    # Create a mapping from (wallet -> [List of SNs that can be exited for that wallet])
-    app.wallet_to_exitable_sn_list = {}
+    exitable_sns = {}
+    wallet_to_exitable_sn_map = {}
+
     if exit_liquidation_list_json is not None:
+        net_info = get_info()
+        block_height = net_info.get('block_height')
+        net_type = net_info.get('nettype')
+        timers = get_timers_hours(net_type)
+
         for entry in exit_liquidation_list_json:
-            entry["contract_id"] = pubkey_bls_to_contract_id_map.get(entry['info']["pubkey_bls"])
-            for contributor in entry['info']["contributors"]:
-                wallet_str = eth_format(contributor["address"])
-                if wallet_str not in app.wallet_to_exitable_sn_list:
-                    app.wallet_to_exitable_sn_list[wallet_str] = []
-                app.wallet_to_exitable_sn_list[wallet_str].append(entry)
+            sn_info = entry.get('info')
+            sn_info['service_node_pubkey'] = entry.get('service_node_pubkey')
+            sn_info['liquidation_height'] = entry.get('liquidation_height')
+            pubkey_bls = sn_info.get('bls_public_key')
+            sn_info['pubkey_bls'] = pubkey_bls
+            contract_id = app.bls_pubkey_to_contract_id_map.get(pubkey_bls)
+            sn_info['contract_id'] = contract_id
+            for item in sn_info['contributors']:
+                item.pop('version')
+
+            exit_type = entry['type']
+            sn_info['exit_type'] = exit_type
+            sn_info['deregistration_unlock_height'] = block_height + blocks_in(
+                timers.get('unlock_duration_hours')) if exit_type == 'deregister' else None
+
+            exitable_sns[contract_id] = sn_info
+
+            for contributor in sn_info['contributors']:
+                wallet_str = eth_format(contributor.get('address'))
+                wallet_to_exitable_sn_map.setdefault(wallet_str, set()).add(contract_id)
+
+    # Apply the new state if there are any
+    if len(exitable_sns) > 0:
+        app.contract_id_to_exitable_sn_map = exitable_sns
+        app.wallet_to_exitable_sn_map = wallet_to_exitable_sn_map
 
     # Get the accrued rewards values for each wallet
     accrued_rewards_json = oxen_rpc_get_accrued_rewards(omq, oxend).get()
@@ -559,60 +571,25 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
 
     sns   = []
     nodes = []
-    if wallet_str in app.wallet_to_sn_list:
-        for sn_index in app.wallet_to_sn_list[wallet_str]:
-            sn_info = app.sn_list[sn_index]
-            sns.append(sn_info)
-            balance = {c["address"]: c["amount"] for c in sn_info["contributors"]}.get(wallet_str, 0)
-            state   = 'Decommissioned' if not sn_info["active"] and sn_info["funded"] else 'Running'
-            nodes.append({
-                'balance':                 balance,
-                'contributors':            sn_info["contributors"],
-                'last_uptime_proof':       sn_info["last_uptime_proof"],
-                'contract_id':             sn_info["contract_id"],
-                'operator_address':        sn_info["operator_address"],
-                'operator_fee':            sn_info["portions_for_operator"],
-                'requested_unlock_height': sn_info["requested_unlock_height"],
-                'last_reward_block_height': sn_info["last_reward_block_height"],
-                'service_node_pubkey':     sn_info["service_node_pubkey"],
-                'pubkey_bls':              sn_info["pubkey_bls"],
-                'decomm_blocks_remaining': max(sn_info["earned_downtime_blocks"], 0),
-                'state':                   state,
-            })
-
-    if wallet_str in app.wallet_to_exitable_sn_list:
-        entry   = app.wallet_to_exitable_sn_list[wallet_str]
-
-        for exit_sn in entry:
-            balance = 0
-            for item in exit_sn['info']['contributors']:
-                if eth_format(item['address']) == wallet_str:
-                    balance += item["amount"]
-
-
-            if 'type' in exit_sn:
-                if exit_sn['type'] == 'exit':
-                    exit_sn['state'] = "Exited" if exit_sn['contract_id'] is None else "Awaiting Exit"
-                elif exit_sn['type'] == 'deregistered':
-                    exit_sn['state'] = "Deregistered"
-                exit_sn.pop('type')
-
-
-            nodes.append({
-                'balance':                 balance,
-                'contributors':            exit_sn['info']['contributors'],
-                # TODO: Missing 'last_uptime_proof':       exit_sn['info']['last_uptime_proof'],
-                'contract_id':             exit_sn['contract_id'],
-                'operator_address':        exit_sn['info']['operator_address'],
-                'operator_fee':            exit_sn['info']['portions_for_operator'],
-                'requested_unlock_height': exit_sn['info']['requested_unlock_height'],
-                'last_reward_block_height':exit_sn['info']['last_reward_block_height'],
-                'service_node_pubkey':     exit_sn['service_node_pubkey'],
-                'liquidation_height':      exit_sn['liquidation_height'],
-                'pubkey_bls':              exit_sn['info']['pubkey_bls'],
-                'state':                   exit_sn['state'],
-                'event_height':            exit_sn['height'],
-            })
+    for sn_index in app.wallet_to_sn_map.get(wallet_str, []):
+        sn_info = app.contract_id_to_sn_map[sn_index]
+        sns.append(sn_info)
+        balance = {c["address"]: c["amount"] for c in sn_info["contributors"]}.get(wallet_str, 0)
+        state   = 'Decommissioned' if not sn_info["active"] and sn_info["funded"] else 'Running'
+        nodes.append({
+            'balance':                 balance,
+            'contributors':            sn_info["contributors"],
+            'last_uptime_proof':       sn_info["last_uptime_proof"],
+            'contract_id':             sn_info["contract_id"],
+            'operator_address':        sn_info["operator_address"],
+            'operator_fee':            sn_info["portions_for_operator"],
+            'requested_unlock_height': sn_info["requested_unlock_height"],
+            'last_reward_block_height':sn_info["last_reward_block_height"],
+            'service_node_pubkey':     sn_info["service_node_pubkey"],
+            'pubkey_bls':              sn_info["pubkey_bls"],
+            'decomm_blocks_remaining': max(sn_info["earned_downtime_blocks"], 0),
+            'state':                   state,
+        })
 
     contracts = []
     if wallet_str in app.contributors:
@@ -621,19 +598,6 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
             contracts.append({
                 'contract_address': address,
                 'details': details
-            })
-            if details["finalized"]:
-                continue
-            state = 'Cancelled' if details["cancelled"] else 'Awaiting Contributors'
-            nodes.append({
-                'balance':                 details["contributions"].get(wallet_str, 0),
-                'contributors':            details["contributions"],
-                'last_uptime_proof':       0,
-                'operator_address':        details["contributor_addresses"][0],
-                'operator_fee':            details["service_node_params"]["fee"],
-                'requested_unlock_height': 0,
-                'service_node_pubkey':     details["service_node_params"]["serviceNodePubkey"],
-                'state':                   state,
             })
 
     # Setup the result
@@ -707,9 +671,8 @@ def get_exit(ed25519_pubkey: bytes):
 def get_exit_liquidation_list():
     try:
         array = []
-        for item in app.wallet_to_exitable_sn_list.values():
-            for entry in item:
-                array.append(entry)
+        for item in app.contract_id_to_exitable_sn_map.values():
+            array.append(item)
 
         result = json_response({
             'result': array
@@ -745,7 +708,7 @@ def decode_bytes(k, x, length):
     b64_unpadded = (length * 4 + 2) // 3
     b64_padded = (length + 2) // 3 * 4
 
-    print(f"DEBGUG: {len(x)}, {hex_len}")
+    app.logger.debug(f"{len(x)}, {hex_len}")
     if len(x) == hex_len and all(c in string.hexdigits for c in x):
         return bytes.fromhex(x)
     if len(x) in (b64_unpadded, b64_padded):
@@ -786,7 +749,7 @@ def raw_eth_addr(k, v):
     raise ParseError(k, "not an ETH address")
 
 
-def eth_format(addr: Union[bytes, str]):
+def eth_format(addr: Union[bytes, str]) -> ChecksumAddress:
     try:
         return eth_utils.to_checksum_address(addr)
     except ValueError:
