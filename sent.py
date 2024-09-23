@@ -13,7 +13,9 @@ import subprocess
 import config
 import datetime
 
-from typing           import Callable, Any, Union
+from itertools        import chain
+from eth_typing       import ChecksumAddress
+from typing           import TypedDict, Callable, Any, Union
 from functools        import partial
 from werkzeug.routing import BaseConverter
 from nacl.signing     import VerifyKey
@@ -372,16 +374,17 @@ def fetch_contract_statuses(signum):
             # Fetch statuses and other details
             is_finalized        = contract_interface.is_finalized()
             is_cancelled        = contract_interface.is_cancelled()
-            bls_pubkey          = contract_interface.get_bls_pubkey()
+            pubkey_bls          = contract_interface.get_bls_pubkey()
             service_node_params = contract_interface.get_service_node_params()
             #contributor_addresses = contract_interface.get_contributor_addresses()
             total_contributions = contract_interface.total_contribution()
             contributions       = contract_interface.get_individual_contributions()
 
             app.contracts[contract_address] = {
+                'contract_state': 'finalized' if is_finalized else 'cancelled' if is_cancelled else 'awaiting_contributors',
                 'finalized': is_finalized,
                 'cancelled': is_cancelled,
-                'bls_pubkey': bls_pubkey,
+                'pubkey_bls': pubkey_bls,
                 'fee': service_node_params['fee'],
                 'service_node_pubkey': service_node_params['serviceNodePubkey'],
                 'service_node_signature': service_node_params['serviceNodeSignature'],
@@ -400,18 +403,11 @@ def fetch_contract_statuses(signum):
 
     app.logger.info("{} Update Contract Statuses Finish".format(date_now_str()))
 
-def get_service_node_contract_ids():
-    # Create dictionary of (bls_pubkey -> contract_id)
-    [ids, bls_keys]    = app.service_node_rewards.allServiceNodeIDs()
-    return {f"{x:064x}{y:064x}": contract_id for contract_id, (x, y) in zip(ids, bls_keys)}
 
 @timer(10)
 def fetch_service_nodes(signum):
     app.logger.info("{} Update SN Start".format(date_now_str()))
     omq, oxend            = omq_connection()
-
-    # Create dictionary of (bls_pubkey -> contract_id)
-    pubkey_bls_to_contract_id_map = get_service_node_contract_ids()
 
     # Generate new state
     sn_info_list      = get_sns_future(omq, oxend).get()["service_node_states"]
