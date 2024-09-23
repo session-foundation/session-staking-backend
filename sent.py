@@ -494,6 +494,8 @@ def fetch_service_nodes(signum):
         # Add the SN contract ID to the sn_info dict
         contract_id = app.bls_pubkey_to_contract_id_map.get(sn_info["pubkey_bls"])
         sn_info["contract_id"] = contract_id
+        requested_unlock_height = sn_info.get('requested_unlock_height')
+        sn_info['requested_unlock_height'] = requested_unlock_height if requested_unlock_height is not 0 else None
         sn_map[contract_id] = sn_info
 
         contributors = {c["address"]: c["amount"] for c in sn_info["contributors"]}
