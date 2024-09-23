@@ -77,6 +77,7 @@ def get_oxen_rpc_bls_exit_liquidation_list(omq, oxend):
 class App(flask.Flask):
     def __init__(self):
         super().__init__(__name__)
+        self.logger.setLevel(config.LOG_LEVEL)
 
         self.service_node_rewards              = ServiceNodeRewardsInterface(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_REWARDS_ADDRESS)
         self.reward_rate_pool                  = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
@@ -348,7 +349,7 @@ def json_response(vals):
 
 @timer(10, target="worker1")
 def fetch_contribution_contracts(signum):
-    app.logger.warning("{} Fetch contribution contracts start".format(date_now_str()))
+    app.logger.info("{} Fetch contribution contracts start".format(date_now_str()))
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
 
@@ -364,11 +365,11 @@ def fetch_contribution_contracts(signum):
                 (contract_address,)
             )
         sql.commit()
-    app.logger.warning("{} Fetch contribution contracts finish".format(date_now_str()))
+    app.logger.info("{} Fetch contribution contracts finish".format(date_now_str()))
 
 @timer(30)
 def fetch_contract_statuses(signum):
-    app.logger.warning("{} Update Contract Statuses Start".format(date_now_str()))
+    app.logger.info("{} Update Contract Statuses Start".format(date_now_str()))
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
         cursor.execute("SELECT contract_address FROM contribution_contracts")
@@ -408,7 +409,7 @@ def fetch_contract_statuses(signum):
                 if contract_address not in app.contributors[wallet_key]:
                     app.contributors[wallet_key].append(contract_address)
 
-    app.logger.warning("{} Update Contract Statuses Finish".format(date_now_str()))
+    app.logger.info("{} Update Contract Statuses Finish".format(date_now_str()))
 
 def get_service_node_contract_ids():
     # Create dictionary of (bls_pubkey -> contract_id)
@@ -417,7 +418,7 @@ def get_service_node_contract_ids():
 
 @timer(10)
 def fetch_service_nodes(signum):
-    app.logger.warning("{} Update SN Start".format(date_now_str()))
+    app.logger.info("{} Update SN Start".format(date_now_str()))
     omq, oxend            = omq_connection()
 
     # Create dictionary of (bls_pubkey -> contract_id)
@@ -501,7 +502,8 @@ def fetch_service_nodes(signum):
         # TODO It appears that doing the contract call is quite slow.
         app.wallet_map[address_key].rewards = rewards
 
-    app.logger.warning("{} Update SN finished".format(date_now_str()))
+    app.logger.info("{} Update SN finished".format(date_now_str()))
+
 
 @app.route("/info")
 def network_info():
@@ -1093,7 +1095,7 @@ def format_currency(units: int, decimal: int = 9):
     it does not use floating point math or involve any truncation or rounding
     """
     base = 10**decimal
-    print(f"units: {units}, base: {base}, decimal: {decimal}, {units//base}")
+    app.logger.debug(f"units: {units}, base: {base}, decimal: {decimal}, {units//base}")
     frac = units % base
     frac = "" if frac == 0 else f".{frac:0{decimal}d}".rstrip("0")
     return f"{units // base}{frac}"

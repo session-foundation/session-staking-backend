@@ -6,3 +6,4 @@ eth-utils==5.0.0
 Werkzeug==3.0.4
 uWSGI==2.0.26
 web3==7.2.0
+eth-typing==5.0.0
