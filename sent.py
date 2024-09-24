@@ -148,30 +148,34 @@ class App(flask.Flask):
                 requested_unlock_height INTEGER,
                 service_node_pubkey BLOB NOT NULL,
                 state TEXT NOT NULL
+                
+                CHECK(length(operator_address) == 20)
+                
             )
             """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS stake_contributions (
-                id INTEGER PRIMARY KEY NOT NULL,
-                contract_id INTEGER NOT NULL REFERENCES stakes(id),
+                contract_id INTEGER NOT NULL,
                 address BLOB NOT NULL,
                 amount INTEGER NOT NULL,
-                reserved INTEGER
+                reserved INTEGER,
+                
+                CHECK(length(address) == 20),
+                
+                FOREIGN KEY (contract_id) REFERENCES stakes(id),
+                PRIMARY KEY (contract_id, address)
             );
         """)
 
         cursor.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_stake_contributions_address ON stake_contributions(address);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_stake_contributions_contract_id_address ON stake_contributions(contract_id, address);
             """)
 
         cursor.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_stake_contributions_contract_id ON stake_contributions(contract_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_stake_contributions_contract_id_address_amount ON stake_contributions(contract_id, address, amount);
             """)
 
-        cursor.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_stake_contributions_contract_id_address ON stake_contributions(contract_id, address, amount);
-            """)
 
         cursor.close()
         sql.close()
