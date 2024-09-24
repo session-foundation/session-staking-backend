@@ -1134,11 +1134,15 @@ def insert_updated_db_stakes(signum):
     Inserts or updates the stakes in the database.
     """
     app.logger.info("{} Insert or update stakes db start".format(date_now_str()))
+    added_contract_ids = set()
     with app.app_context(), get_sql() as sql:
         cur = sql.cursor()
-        for node in chain(app.contract_id_to_sn_map.values(), app.contract_id_to_exitable_sn_map.values()):
+        for node in chain(app.contract_id_to_exitable_sn_map.values(), app.contract_id_to_sn_map.values()):
             stake = parse_stake_info(node, node.get('operator_address'))
             contract_id = stake.get('contract_id')
+            if contract_id in added_contract_ids:
+                continue
+            added_contract_ids.add(contract_id)
             cur.execute(
                 """
                 INSERT OR REPLACE INTO stakes (id, last_updated, pubkey_bls, deregistration_unlock_height, earned_downtime_blocks, last_reward_block_height, last_uptime_proof, operator_address, operator_fee, requested_unlock_height, service_node_pubkey, state)
@@ -1170,10 +1174,10 @@ def insert_updated_db_stakes(signum):
                     (
                         contract_id,
                         address_to_bytes(contributor['address']),
-                        contributor['amount'],
+                        contributor.get('amount'),
                     )
                 )
-
+    added_contract_ids.clear()
     app.logger.info("{} Insert or update stakes db finish".format(date_now_str()))
 
 # Decodes `x` into a bytes of length `length`.  `x` should be hex or base64 encoded, without
