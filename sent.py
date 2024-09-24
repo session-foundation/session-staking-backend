@@ -981,8 +981,8 @@ def get_liquidation(ed25519_pubkey: bytes):
 
 
 def handle_stakes_row(
-        wallet_to_historical_stakes: dict[ChecksumAddress, set[int]],
-        historical_stakes_map: dict[int, Stake],
+        wallet_to_historical_stakes_map: dict[ChecksumAddress, set[int]],
+        contract_id_to_historical_stakes_map: dict[int, Stake],
         sql_cur: sqlite3.Cursor,
 ):
     for row in sql_cur:
@@ -1003,12 +1003,10 @@ def handle_stakes_row(
             contributor_amount,
         ) = row
 
-        if state not in ['Deregistered', 'Exited', 'Awaiting Exit', 'Cancelled']:
-            continue
 
-        contrubutor_address_str = eth_format(contributor_address)
+        contributor_adr = eth_format(contributor_address)
 
-        if contract_id not in historical_stakes_map:
+        if contract_id not in contract_id_to_historical_stakes_map:
             stake = {
                 'pubkey_bls': pubkey_bls,
                 'contract_id': contract_id,
@@ -1023,17 +1021,17 @@ def handle_stakes_row(
                 'state': state,
                 'contributors': [],
             }
-            historical_stakes_map[contract_id] = stake
+            contract_id_to_historical_stakes_map[contract_id] = stake
         else:
-            stake = historical_stakes_map[contract_id]
+            stake = contract_id_to_historical_stakes_map[contract_id]
 
         # Add contributor info
         contributor = {
-            'address': contrubutor_address_str,
+            'address': contributor_adr,
             'amount': contributor_amount,
         }
         stake['contributors'].append(contributor)
-        wallet_to_historical_stakes.setdefault(contrubutor_address_str, set()).add(contract_id)
+        wallet_to_historical_stakes_map.setdefault(contributor_adr, set()).add(contract_id)
 
 
 def get_db_stakes_for_wallet(wallet_address: ChecksumAddress):
@@ -1042,6 +1040,7 @@ def get_db_stakes_for_wallet(wallet_address: ChecksumAddress):
     the data but the timed database read hasn't executed yet with the address in the tracked list. A wallet address
     can only call this once in between scheduled database read times.
     """
+    app.logger.debug("{} get_db_stakes_for_wallet: {}".format(date_now_str(), wallet_address))
     if wallet_address in app.tmp_db_trigger_wallet_addresses:
         return
 
@@ -1078,8 +1077,9 @@ def chunks(lst, n):
         yield lst[i:i + n]
 
 
-@timer(90)
+@timer(15)
 def get_db_stakes(signum):
+    app.logger.info("{} Get stakes db start".format(date_now_str()))
     wallet_to_historical_stakes_map: dict[ChecksumAddress, set[int]] = {}  # (Wallet address -> Set of contract_ids)
     contract_id_to_historical_stakes_map: dict[int, Stake] = {}  # (contract_ids -> Stake Info)
 
