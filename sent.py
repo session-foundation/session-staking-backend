@@ -499,7 +499,7 @@ def fetch_service_nodes(signum):
         contract_id = app.bls_pubkey_to_contract_id_map.get(sn_info["pubkey_bls"])
         sn_info["contract_id"] = contract_id
         requested_unlock_height = sn_info.get('requested_unlock_height')
-        sn_info['requested_unlock_height'] = requested_unlock_height if requested_unlock_height is not 0 else None
+        sn_info['requested_unlock_height'] = requested_unlock_height if requested_unlock_height != 0 else None
         sn_map[contract_id] = sn_info
 
         contributors = {c["address"]: c["amount"] for c in sn_info["contributors"]}
@@ -656,7 +656,7 @@ class ErrorResponse:
 def parse_stake_info(
         stake: dict,
         wallet_address: ChecksumAddress,
-        confirmed_exited=False,
+        confirmed_exited: bool = False,
 ) -> Stake | ErrorResponse:
     """
     Parses stake information and returns a standardised dictionary of stake info.
@@ -709,7 +709,13 @@ def parse_stake_info(
                 else 'Running'
             )
         elif 'state' in stake:
-            state = stake.get('state')
+            current_state = stake.get('state')
+            if current_state == 'Deregistered':
+                deregistration_unlock_height = stake.get('deregistration_unlock_height')
+            if confirmed_exited and current_state == 'Awaiting Exit':
+                state = 'Exited'
+            else:
+                state = current_state
         else:
             raise ValueError("Unable to determine node state")
     except ValueError as e:
@@ -744,6 +750,7 @@ def parse_stake_info(
         'service_node_pubkey': stake.get('service_node_pubkey'),
         'staked_balance': staked_balance,
         'state': state,
+        'exited': confirmed_exited or state == 'Exited',
     }
 
 
