@@ -1118,8 +1118,37 @@ def load_contributor_addresses_into_tracked_wallet_addresses():
         for row in cur:
             app.tracked_wallet_addresses.add(row[0])
 
+# Debug function to recover non-contributor stakes. This gets all stakes that are not in the stake_contributions table and adds them to the stake_contributions using the operator address as the contributor address.
+def recover_non_contributor_stakes():
+    with app.app_context(), get_sql() as sql:
+        cur = sql.cursor()
+        added_stakes = set()
+        cur.execute("SELECT DISTINCT contract_id, address FROM stake_contributions")
+        for contract_id, address in cur:
+            added_stakes.add((contract_id, address))
 
-@timer(60)
+        cur.execute("SELECT DISTINCT id, operator_address FROM stakes")
+        stakes_to_recover = set()
+        for contract_id, operator_address in cur:
+            if (contract_id, operator_address) in added_stakes:
+                continue
+            stakes_to_recover.add((contract_id, operator_address))
+
+        for contract_id, operator_address in stakes_to_recover:
+            app.logger.debug(f"Recovering stake for contract_id: {contract_id}, operator_address: {operator_address}")
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO stake_contributions (contract_id, address, amount)
+                VALUES                                     (?,           ?,       ?)
+                """,
+                (
+                    contract_id,
+                    operator_address,
+                    20000000000000,
+                )
+            )
+
+@timer(30)
 def update_service_node_contract_ids(signum) -> None:
     """
     Update the map of service node contract ids to BLS public keys. This fetches the list of all service nodes from the
@@ -1132,7 +1161,7 @@ def update_service_node_contract_ids(signum) -> None:
                                                                                      len(app.bls_pubkey_to_contract_id_map)))
 
 
-@timer(90)
+@timer(60)
 def insert_updated_db_stakes(signum):
     """
     Inserts or updates the stakes in the database.
@@ -1160,7 +1189,7 @@ def insert_updated_db_stakes(signum):
                     stake['earned_downtime_blocks'],
                     stake['last_reward_block_height'],
                     stake['last_uptime_proof'],
-                    stake['operator_address'],
+                    address_to_bytes(stake['operator_address']),
                     stake['operator_fee'],
                     stake['requested_unlock_height'],
                     stake['service_node_pubkey'],
@@ -1240,7 +1269,7 @@ def eth_format(addr: Union[bytes, str]) -> ChecksumAddress:
     try:
         return eth_utils.to_checksum_address(addr)
     except ValueError:
-        raise ParseError("Invalid ETH address")
+        raise ParseError(addr, "Invalid ETH address")
 
 
 class SNSignatureValidationError(ValueError):
