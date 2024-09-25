@@ -522,26 +522,39 @@ def fetch_service_nodes(signum):
 
     if exit_liquidation_list_json is not None:
         net_info = get_info()
-        block_height = net_info.get('block_height')
         net_type = net_info.get('nettype')
         timers = get_timers_hours(net_type)
 
         for entry in exit_liquidation_list_json:
             sn_info = entry.get('info')
-            sn_info['service_node_pubkey'] = entry.get('service_node_pubkey')
-            sn_info['liquidation_height'] = entry.get('liquidation_height')
+
             pubkey_bls = sn_info.get('bls_public_key')
-            sn_info['pubkey_bls'] = pubkey_bls
             contract_id = app.bls_pubkey_to_contract_id_map.get(pubkey_bls)
+            if contract_id is None:
+                # If there is no contract ID it means this node has exited the smart contract and this event is being
+                #  confirmed by oxend. This is the last state we'll get for this node from oxend.
+                # TODO: look at implementing some logic to add the node data to a dict that checks to make sure the db
+                #  is properly updated with the final data we'll receive from oxend about this node.
+                app.logger.warning(f"Contract ID not found for BLS pubkey: {pubkey_bls}")
+                continue
+
+            sn_info['pubkey_bls'] = pubkey_bls
             sn_info['contract_id'] = contract_id
+
             for item in sn_info['contributors']:
                 item.pop('version')
 
-            exit_type = entry['type']
+            exit_type = entry.get('type')
+            event_height = entry.get('height')
+
             sn_info['exit_type'] = exit_type
-            sn_info['deregistration_unlock_height'] = block_height + blocks_in(
+            requested_unlock_height = sn_info.get('requested_unlock_height')
+            sn_info['requested_unlock_height'] = requested_unlock_height if requested_unlock_height != 0 else None
+            sn_info['deregistration_unlock_height'] = event_height + blocks_in(
                 timers.get('unlock_duration_hours')) if exit_type == 'deregister' else None
 
+            sn_info['service_node_pubkey'] = entry.get('service_node_pubkey')
+            sn_info['liquidation_height'] = entry.get('liquidation_height')
             exitable_sns[contract_id] = sn_info
 
             for contributor in sn_info['contributors']:
