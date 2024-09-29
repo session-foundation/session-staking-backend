@@ -363,11 +363,15 @@ def fetch_network_timers(network_type: str = None):
         return json_response(get_timers_hours(network_type))
 
 
-BLOCKS_PER_HOUR = 120
+# Target block time in seconds
+TARGET_BLOCK_TIME = 120
 
 
-def blocks_in(hours: int):
-    return int(hours * BLOCKS_PER_HOUR)
+def blocks_in(seconds: int):
+    """
+    Mimics the behavior of the oxend `blocks_in` function.
+    """
+    return int(seconds / TARGET_BLOCK_TIME)
 
 
 def get_info():
@@ -546,12 +550,14 @@ def fetch_service_nodes(signum):
 
             exit_type = entry.get('type')
             event_height = entry.get('height')
+            print(f"{contract_id} event_height: {event_height}")
+            print(f"{contract_id} timers.get('unlock_duration_hours'): {timers.get('unlock_duration_hours')}")
 
             sn_info['exit_type'] = exit_type
             requested_unlock_height = sn_info.get('requested_unlock_height')
             sn_info['requested_unlock_height'] = requested_unlock_height if requested_unlock_height != 0 else None
             sn_info['deregistration_unlock_height'] = event_height + blocks_in(
-                timers.get('unlock_duration_hours')) if exit_type == 'deregister' else None
+                timers.get('unlock_duration_hours') * 3600) if exit_type == 'deregister' else None
 
             sn_info['service_node_pubkey'] = entry.get('service_node_pubkey')
             sn_info['liquidation_height'] = entry.get('liquidation_height')
