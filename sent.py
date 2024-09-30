@@ -550,9 +550,6 @@ def fetch_service_nodes(signum):
 
             exit_type = entry.get('type')
             event_height = entry.get('height')
-            print(f"{contract_id} event_height: {event_height}")
-            print(f"{contract_id} timers.get('unlock_duration_hours'): {timers.get('unlock_duration_hours')}")
-
             sn_info['exit_type'] = exit_type
             requested_unlock_height = sn_info.get('requested_unlock_height')
             sn_info['requested_unlock_height'] = requested_unlock_height if requested_unlock_height != 0 else None
