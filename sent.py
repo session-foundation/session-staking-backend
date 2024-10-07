@@ -500,22 +500,38 @@ def fetch_service_nodes(signum):
 
     for sn_info in sn_info_list:
         # Add the SN contract ID to the sn_info dict
-        contract_id = app.bls_pubkey_to_contract_id_map.get(sn_info["pubkey_bls"])
+        pubkey_bls = sn_info.get('pubkey_bls')
+        if pubkey_bls is None:
+            app.logger.warning(f"pubkey_bls is None for sn_info SN: {sn_info}")
+            continue
+        contract_id = app.bls_pubkey_to_contract_id_map.get(pubkey_bls)
+        if contract_id is None:
+            app.logger.warning(f"Contract ID not found for sn_info SN with BLS pubkey: {pubkey_bls}")
+            continue
+
         sn_info["contract_id"] = contract_id
         requested_unlock_height = sn_info.get('requested_unlock_height')
         sn_info['requested_unlock_height'] = requested_unlock_height if requested_unlock_height != 0 else None
         sn_map[contract_id] = sn_info
 
         contributors = {c["address"]: c["amount"] for c in sn_info["contributors"]}
-
         # Creating (wallet -> [SN's the wallet owns]) table
         for wallet_key in contributors.keys():
+            # TODO: Validate we want to allow wallet_key to not go through eth_format if len == 40
             formatted_wallet_key = eth_format(wallet_key) if len(wallet_key) == 40 else wallet_key
+
+            if formatted_wallet_key is None:
+                app.logger.warning(f"Wallet key is None for sn_info SN: {sn_info}")
+                continue
+
             wallet_to_sn_map.setdefault(formatted_wallet_key, []).append(contract_id)
 
     # Apply the new state if there are any
     if len(sn_map) > 0:
+        app.logger.debug(f"Adding {len(sn_map)} service node info to the contract_id_to_sn_map")
         app.contract_id_to_sn_map     = sn_map
+
+        app.logger.debug(f"Adding {len(wallet_to_sn_map)} wallet to service node map")
         app.wallet_to_sn_map          = wallet_to_sn_map
 
     # Get list of SNs that can be liquidated/exited
@@ -533,41 +549,53 @@ def fetch_service_nodes(signum):
             sn_info = entry.get('info')
 
             pubkey_bls = sn_info.get('bls_public_key')
+            if pubkey_bls is None:
+                app.logger.warning(f"bls_public_key is None for exit_liquidation_list_json SN: {sn_info}")
+                continue
+
             contract_id = app.bls_pubkey_to_contract_id_map.get(pubkey_bls)
             if contract_id is None:
                 # If there is no contract ID it means this node has exited the smart contract and this event is being
                 #  confirmed by oxend. This is the last state we'll get for this node from oxend.
                 # TODO: look at implementing some logic to add the node data to a dict that checks to make sure the db
                 #  is properly updated with the final data we'll receive from oxend about this node.
-                app.logger.warning(f"Contract ID not found for BLS pubkey: {pubkey_bls}")
+                app.logger.warning(f"Contract ID not found for exit_liquidation_list_json SN with BLS pubkey: {pubkey_bls}")
                 continue
 
             sn_info['pubkey_bls'] = pubkey_bls
             sn_info['contract_id'] = contract_id
 
-            for item in sn_info['contributors']:
+            for item in sn_info.get('contributors'):
                 item.pop('version')
 
             exit_type = entry.get('type')
-            event_height = entry.get('height')
             sn_info['exit_type'] = exit_type
+            sn_info['deregistration_unlock_height'] = entry.get('height') + blocks_in(
+                timers.get('unlock_duration_hours') * 3600) if exit_type == 'deregister' else None
+
             requested_unlock_height = sn_info.get('requested_unlock_height')
             sn_info['requested_unlock_height'] = requested_unlock_height if requested_unlock_height != 0 else None
-            sn_info['deregistration_unlock_height'] = event_height + blocks_in(
-                timers.get('unlock_duration_hours') * 3600) if exit_type == 'deregister' else None
 
             sn_info['service_node_pubkey'] = entry.get('service_node_pubkey')
             sn_info['liquidation_height'] = entry.get('liquidation_height')
             exitable_sns[contract_id] = sn_info
 
-            for contributor in sn_info['contributors']:
+            for contributor in sn_info.get('contributors'):
                 wallet_str = eth_format(contributor.get('address'))
+
+                if wallet_str is None:
+                    app.logger.warning(f"Wallet str is None for exit_liquidation_list_json SN: {sn_info}")
+                    continue
+
                 wallet_to_exitable_sn_map.setdefault(wallet_str, set()).add(contract_id)
 
     # Apply the new state if there are any
     if len(exitable_sns) > 0:
+        app.logger.debug(f"Adding {len(exitable_sns)} exitable SN info to the contract_id_to_exitable_sn_map")
         app.contract_id_to_exitable_sn_map = exitable_sns
-        app.wallet_to_exitable_sn_map = wallet_to_exitable_sn_map
+
+        app.logger.debug(f"Adding {len(wallet_to_exitable_sn_map)} wallet to exitable SN map")
+        app.wallet_to_exitable_sn_map      = wallet_to_exitable_sn_map
 
     # Get the accrued rewards values for each wallet
     accrued_rewards_json = oxen_rpc_get_accrued_rewards(omq, oxend).get()
@@ -1179,6 +1207,7 @@ def update_service_node_contract_ids(signum) -> None:
     """
     app.logger.info("{} Updating service node contract ids".format(date_now_str()))
     [ids, bls_keys] = app.service_node_rewards.allServiceNodeIDs()
+    app.logger.debug(f"Added {len(ids)} service node contract ids")
     app.bls_pubkey_to_contract_id_map = {f"{x:064x}{y:064x}": contract_id for contract_id, (x, y) in zip(ids, bls_keys)}
     app.logger.info("{} Updating service node contract ids finish. Nodes: {}".format(date_now_str(),
                                                                                      len(app.bls_pubkey_to_contract_id_map)))
