@@ -9,6 +9,9 @@ from config_defaults import *
 #testnet_rpc = 'tcp://127.0.0.1:6788'
 #devnet_rpc = 'tcp://127.0.0.1:6787'
 
+stagenet_rpc = 'tcp://127.0.0.1:6786'
+LOG_LEVEL = logging.INFO
+
 stagenet  = True
 sqlite_db = 'stagenet.db'
 

@@ -5,7 +5,7 @@
 #
 # To override things that are specific to mainnet/testnet/etc. add `config.whatever = ...` lines
 # into `mainnet.py`/`testnet.py`/etc.
-
+import logging
 
 # LMQ RPC endpoint of oxend; can be a unix socket 'ipc:///path/to/oxend.sock' or a tcp socket
 # 'tcp://127.0.0.1:5678'.  mainnet_rpc/testnet_rpc/devnet_rpc are selected based on whether the
@@ -13,6 +13,7 @@
 
 # SQLite database used for persistent data, such as shorted registration URL tokens.
 sqlite_db    = 'sent-backend.db'
+LOG_LEVEL = logging.INFO
 
 mainnet_rpc  = 'ipc://oxend/mainnet.sock'
 mainnet      = False

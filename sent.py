@@ -13,7 +13,9 @@ import subprocess
 import config
 import datetime
 
-from typing           import Callable, Any, Union
+from itertools        import chain
+from eth_typing       import ChecksumAddress
+from typing           import TypedDict, Callable, Any, Union
 from functools        import partial
 from werkzeug.routing import BaseConverter
 from nacl.signing     import VerifyKey
@@ -48,48 +50,37 @@ def oxen_rpc_bls_rewards_request(omq, oxend, eth_address: str) -> FutureJSON:
     return result
 
 def oxen_rpc_bls_exit_liquidation(omq, oxend, ed25519_pubkey: bytes, liquidate: bool) -> FutureJSON:
-    result = FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_request', args={'pubkey': ed25519_pubkey.hex(), 'liquidate': liquidate})
-    return result
+    return FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_request', args={'pubkey': ed25519_pubkey.hex(), 'liquidate': liquidate})
 
 def get_oxen_rpc_bls_exit_liquidation_list(omq, oxend):
-    result = FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_list').get()
-    if result is not None:
-        # Create dictionary of (bls_pubkey -> contract_id)
-        pubkey_bls_to_contract_id_map = get_service_node_contract_ids()
-        for entry in result:
-            # TODO: Unify the naming and fields on the oxen-core side, prefer the names used in
-            # get_service_nodes which is what all end-user consuming applications are using,
-            # consistency is important.
-            if 'bls_public_key' in entry['info']:
-                bls_pubkey = entry['info']['bls_public_key']
-                entry['info']['pubkey_bls'] = bls_pubkey
-                entry['info']['contract_id'] = pubkey_bls_to_contract_id_map.get(bls_pubkey)
-                entry['info'].pop('bls_public_key')
-            for item in entry['info']['contributors']:
-                item.pop('version')
-            if 'state' not in entry:
-                entry['state'] = "Exited" if entry['type'] == 'exit' else "Deregistered"
-            if 'version' in entry:
-                entry.pop('version')
-
-    return result
+    return FutureJSON(omq, oxend, 'rpc.bls_exit_liquidation_list')
 
 class App(flask.Flask):
     def __init__(self):
         super().__init__(__name__)
+        self.logger.setLevel(config.LOG_LEVEL)
 
         self.service_node_rewards              = ServiceNodeRewardsInterface(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_REWARDS_ADDRESS)
         self.reward_rate_pool                  = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
         self.service_node_contribution_factory = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
         self.service_node_contribution         = ContributorContractInterface(config.PROVIDER_ENDPOINT)
 
-        self.sn_list                           = {} # Stores Oxen RPC get_service_nodes result (augmented w/ extra metadata like SN contract ID)
-        self.wallet_to_sn_list                 = {} # (Wallet address -> List of SN's they own or contribute to)
-        self.wallet_to_exitable_sn_list        = {} # (Wallet address -> List of SN's they can liquidate/exit)
+        self.bls_pubkey_to_contract_id_map: dict[str, int]      = {} # (BLS public key -> contract_id)
+
+        self.wallet_to_sn_map: dict[ChecksumAddress, set[int]]  = {} # (0x wallet address -> Set of contract_id's of stakes they are contributors to)
+        self.contract_id_to_sn_map: dict[int, dict]             = {} # (contract_id -> Oxen RPC get_service_nodes result (augmented w/ extra metadata like SN contract ID))
+
+        self.wallet_to_exitable_sn_map: dict[ChecksumAddress, set[int]]         = {} # (0x wallet address -> Set of contract_id's of SN's they can liquidate/exit)
+        self.contract_id_to_exitable_sn_map: dict[int, dict]                    = {} # (contract_id -> SNInfo)
+
+        self.tmp_db_trigger_wallet_addresses: set[ChecksumAddress]              = set() # Wallet addresses that have triggered a db get between scheduled times
+        self.tracked_wallet_addresses: set[ChecksumAddress]                     = set() # Tracked wallet addresses to fetch data from the db for
+        self.wallet_to_historical_stakes_map: dict[ChecksumAddress, set[int]]   = {} # (0x wallet address -> Set of contract_ids)
+        self.contract_id_to_historical_stakes_map: dict[int, Stake]             = {} # (contract_id -> Stake Info)
+
         self.contributors                      = {}
         self.contracts                         = {}
 
-        self.sn_map                            = {} # (Binary SN key_ed25519     -> oxen.rpc.service_node_states dict: info for SN)
         self.wallet_map                        = {} # (Binary ETH wallet address -> WalletInfo)
         git_rev                                = subprocess.run(["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True)
         self.git_rev                           = git_rev.stdout.strip() if git_rev.returncode == 0 else "(unknown)"
@@ -97,6 +88,8 @@ class App(flask.Flask):
         sql = sqlite3.connect(config.sqlite_db)
         cursor = sql.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS registrations (
                 id INTEGER PRIMARY KEY NOT NULL,
@@ -139,6 +132,51 @@ class App(flask.Flask):
         cursor.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS contribution_contract_address_idx ON contribution_contracts(contract_address);
          """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stakes (
+                id INTEGER PRIMARY KEY NOT NULL, /* Contract ID */
+                last_updated INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+
+                pubkey_bls BLOB NOT NULL,
+                deregistration_unlock_height INTEGER,
+                earned_downtime_blocks INTEGER,
+                last_reward_block_height INTEGER,
+                last_uptime_proof INTEGER,
+                operator_address BLOB NOT NULL,
+                operator_fee INTEGER,
+                requested_unlock_height INTEGER,
+                service_node_pubkey BLOB NOT NULL,
+                state TEXT NOT NULL
+                
+                CHECK(length(operator_address) == 20)
+                
+            )
+            """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stake_contributions (
+                contract_id INTEGER NOT NULL,
+                address BLOB NOT NULL,
+                amount INTEGER NOT NULL,
+                reserved INTEGER,
+                
+                CHECK(length(address) == 20),
+                
+                FOREIGN KEY (contract_id) REFERENCES stakes(id),
+                PRIMARY KEY (contract_id, address)
+            );
+        """)
+
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_stake_contributions_contract_id_address ON stake_contributions(contract_id, address);
+            """)
+
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_stake_contributions_contract_id_address_amount ON stake_contributions(contract_id, address, amount);
+            """)
+
+
         cursor.close()
         sql.close()
 
@@ -301,6 +339,41 @@ def get_staking_requirements():
     }
 
 
+def get_timers_hours(network_type: str):
+    match network_type:
+        case 'testnet' | 'stagenet' | 'devnet' | 'localdev' | 'fakechain':
+            return {
+                'deregistration_lock_duration_hours': 48,
+                'unlock_duration_hours': 24,
+            }
+        case 'mainnet':
+            return {
+                'deregistration_lock_duration_hours': 30 * 24,
+                'unlock_duration_hours': 15 * 24,
+            }
+        case _:
+            raise ValueError(f"Unknown network type {network_type}")
+
+
+@app.route("/timers/<network_type>")
+def fetch_network_timers(network_type: str = None):
+    if network_type is None:
+        return json_response(get_timers_hours(get_info().get('nettype')))
+    else:
+        return json_response(get_timers_hours(network_type))
+
+
+# Target block time in seconds
+TARGET_BLOCK_TIME = 120
+
+
+def blocks_in(seconds: int):
+    """
+    Mimics the behavior of the oxend `blocks_in` function.
+    """
+    return int(seconds / TARGET_BLOCK_TIME)
+
+
 def get_info():
     omq, oxend = omq_connection()
     info = FutureJSON(omq, oxend, "rpc.get_info").get()
@@ -348,7 +421,7 @@ def json_response(vals):
 
 @timer(10, target="worker1")
 def fetch_contribution_contracts(signum):
-    app.logger.warning("{} Fetch contribution contracts start".format(date_now_str()))
+    app.logger.info("{} Fetch contribution contracts start".format(date_now_str()))
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
 
@@ -364,34 +437,34 @@ def fetch_contribution_contracts(signum):
                 (contract_address,)
             )
         sql.commit()
-    app.logger.warning("{} Fetch contribution contracts finish".format(date_now_str()))
+    app.logger.info("{} Fetch contribution contracts finish".format(date_now_str()))
 
 @timer(30)
 def fetch_contract_statuses(signum):
-    app.logger.warning("{} Update Contract Statuses Start".format(date_now_str()))
+    app.logger.info("{} Update Contract Statuses Start".format(date_now_str()))
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
         cursor.execute("SELECT contract_address FROM contribution_contracts")
-        contract_addresses = cursor.fetchall()
         app.contributors = {}
         app.contracts = {}
 
-        for (contract_address,) in contract_addresses:
+        for (contract_address,) in cursor:
             contract_interface = app.service_node_contribution.get_contract_instance(contract_address)
 
             # Fetch statuses and other details
             is_finalized        = contract_interface.is_finalized()
             is_cancelled        = contract_interface.is_cancelled()
-            bls_pubkey          = contract_interface.get_bls_pubkey()
+            pubkey_bls          = contract_interface.get_bls_pubkey()
             service_node_params = contract_interface.get_service_node_params()
             #contributor_addresses = contract_interface.get_contributor_addresses()
             total_contributions = contract_interface.total_contribution()
             contributions       = contract_interface.get_individual_contributions()
 
             app.contracts[contract_address] = {
+                'contract_state': 'finalized' if is_finalized else 'cancelled' if is_cancelled else 'awaiting_contributors',
                 'finalized': is_finalized,
                 'cancelled': is_cancelled,
-                'bls_pubkey': bls_pubkey,
+                'pubkey_bls': pubkey_bls,
                 'fee': service_node_params['fee'],
                 'service_node_pubkey': service_node_params['serviceNodePubkey'],
                 'service_node_signature': service_node_params['serviceNodeSignature'],
@@ -408,63 +481,121 @@ def fetch_contract_statuses(signum):
                 if contract_address not in app.contributors[wallet_key]:
                     app.contributors[wallet_key].append(contract_address)
 
-    app.logger.warning("{} Update Contract Statuses Finish".format(date_now_str()))
+    app.logger.info("{} Update Contract Statuses Finish".format(date_now_str()))
 
-def get_service_node_contract_ids():
-    # Create dictionary of (bls_pubkey -> contract_id)
-    [ids, bls_keys]    = app.service_node_rewards.allServiceNodeIDs()
-    return {f"{x:064x}{y:064x}": contract_id for contract_id, (x, y) in zip(ids, bls_keys)}
 
 @timer(10)
 def fetch_service_nodes(signum):
-    app.logger.warning("{} Update SN Start".format(date_now_str()))
+    app.logger.info("{} Update SN Start".format(date_now_str()))
     omq, oxend            = omq_connection()
-
-    # Create dictionary of (bls_pubkey -> contract_id)
-    pubkey_bls_to_contract_id_map = get_service_node_contract_ids()
 
     # Generate new state
     sn_info_list      = get_sns_future(omq, oxend).get()["service_node_states"]
-    wallet_to_sn_list = {}
+    wallet_to_sn_map  = {}
     sn_map            = {}
-    for index, sn_info in enumerate(sn_info_list):
-        # Add the SN contract ID to the sn_info dict
-        sn_info["contract_id"] = pubkey_bls_to_contract_id_map.get(sn_info["pubkey_bls"])
 
-        # Creating (Binary SN key_ed25519 -> oxen.rpc.service_node_states) table
-        service_node_pubkey_hex     = sn_info['service_node_pubkey']
-        service_node_pubkey         = bytes.fromhex(service_node_pubkey_hex)
-        sn_map[service_node_pubkey] = sn_info
+    if len(app.bls_pubkey_to_contract_id_map) == 0:
+        app.logger.warning("{} bls_pubkey_to_contract_id_map is empty, fetching contract ids".format(date_now_str()))
+        update_service_node_contract_ids(None)
+
+    for sn_info in sn_info_list:
+        # Add the SN contract ID to the sn_info dict
+        pubkey_bls = sn_info.get('pubkey_bls')
+        if pubkey_bls is None:
+            app.logger.warning(f"pubkey_bls is None for sn_info SN: {sn_info}")
+            continue
+        contract_id = app.bls_pubkey_to_contract_id_map.get(pubkey_bls)
+        if contract_id is None:
+            app.logger.warning(f"Contract ID not found for sn_info SN with BLS pubkey: {pubkey_bls}")
+            continue
+
+        sn_info["contract_id"] = contract_id
+        requested_unlock_height = sn_info.get('requested_unlock_height')
+        sn_info['requested_unlock_height'] = requested_unlock_height if requested_unlock_height != 0 else None
+        sn_map[contract_id] = sn_info
 
         contributors = {c["address"]: c["amount"] for c in sn_info["contributors"]}
-
         # Creating (wallet -> [SN's the wallet owns]) table
         for wallet_key in contributors.keys():
-            if len(wallet_key) == 40:
-                wallet_key = eth_format(wallet_key)
+            # TODO: Validate we want to allow wallet_key to not go through eth_format if len == 40
+            formatted_wallet_key = eth_format(wallet_key) if len(wallet_key) == 40 else wallet_key
 
-            if wallet_key not in wallet_to_sn_list:
-                wallet_to_sn_list[wallet_key] = []
-            wallet_to_sn_list[wallet_key].append(index)
+            if formatted_wallet_key is None:
+                app.logger.warning(f"Wallet key is None for sn_info SN: {sn_info}")
+                continue
 
-    # Apply the new state at the end together
-    app.sn_map            = sn_map
-    app.wallet_to_sn_list = wallet_to_sn_list
-    app.sn_list           = sn_info_list
+            wallet_to_sn_map.setdefault(formatted_wallet_key, []).append(contract_id)
+
+    # Apply the new state if there are any
+    if len(sn_map) > 0:
+        app.logger.debug(f"Adding {len(sn_map)} service node info to the contract_id_to_sn_map")
+        app.contract_id_to_sn_map     = sn_map
+
+        app.logger.debug(f"Adding {len(wallet_to_sn_map)} wallet to service node map")
+        app.wallet_to_sn_map          = wallet_to_sn_map
 
     # Get list of SNs that can be liquidated/exited
-    exit_liquidation_list_json = get_oxen_rpc_bls_exit_liquidation_list(omq, oxend)
+    exit_liquidation_list_json = get_oxen_rpc_bls_exit_liquidation_list(omq, oxend).get()
 
-    # Create a mapping from (wallet -> [List of SNs that can be exited for that wallet])
-    app.wallet_to_exitable_sn_list = {}
+    exitable_sns = {}
+    wallet_to_exitable_sn_map = {}
+
     if exit_liquidation_list_json is not None:
+        net_info = get_info()
+        net_type = net_info.get('nettype')
+        timers = get_timers_hours(net_type)
+
         for entry in exit_liquidation_list_json:
-            entry["contract_id"] = pubkey_bls_to_contract_id_map.get(entry['info']["pubkey_bls"])
-            for contributor in entry['info']["contributors"]:
-                wallet_str = eth_format(contributor["address"])
-                if wallet_str not in app.wallet_to_exitable_sn_list:
-                    app.wallet_to_exitable_sn_list[wallet_str] = []
-                app.wallet_to_exitable_sn_list[wallet_str].append(entry)
+            sn_info = entry.get('info')
+
+            pubkey_bls = sn_info.get('bls_public_key')
+            if pubkey_bls is None:
+                app.logger.warning(f"bls_public_key is None for exit_liquidation_list_json SN: {sn_info}")
+                continue
+
+            contract_id = app.bls_pubkey_to_contract_id_map.get(pubkey_bls)
+            if contract_id is None:
+                # If there is no contract ID it means this node has exited the smart contract and this event is being
+                #  confirmed by oxend. This is the last state we'll get for this node from oxend.
+                # TODO: look at implementing some logic to add the node data to a dict that checks to make sure the db
+                #  is properly updated with the final data we'll receive from oxend about this node.
+                app.logger.warning(f"Contract ID not found for exit_liquidation_list_json SN with BLS pubkey: {pubkey_bls}")
+                continue
+
+            sn_info['pubkey_bls'] = pubkey_bls
+            sn_info['contract_id'] = contract_id
+
+            for item in sn_info.get('contributors'):
+                item.pop('version')
+
+            exit_type = entry.get('type')
+            sn_info['exit_type'] = exit_type
+            sn_info['deregistration_unlock_height'] = entry.get('height') + blocks_in(
+                timers.get('unlock_duration_hours') * 3600) if exit_type == 'deregister' else None
+
+            requested_unlock_height = sn_info.get('requested_unlock_height')
+            sn_info['requested_unlock_height'] = requested_unlock_height if requested_unlock_height != 0 else None
+
+            sn_info['service_node_pubkey'] = entry.get('service_node_pubkey')
+            sn_info['liquidation_height'] = entry.get('liquidation_height')
+            exitable_sns[contract_id] = sn_info
+
+            for contributor in sn_info.get('contributors'):
+                wallet_str = eth_format(contributor.get('address'))
+
+                if wallet_str is None:
+                    app.logger.warning(f"Wallet str is None for exit_liquidation_list_json SN: {sn_info}")
+                    continue
+
+                wallet_to_exitable_sn_map.setdefault(wallet_str, set()).add(contract_id)
+
+    # Apply the new state if there are any
+    if len(exitable_sns) > 0:
+        app.logger.debug(f"Adding {len(exitable_sns)} exitable SN info to the contract_id_to_exitable_sn_map")
+        app.contract_id_to_exitable_sn_map = exitable_sns
+
+        app.logger.debug(f"Adding {len(wallet_to_exitable_sn_map)} wallet to exitable SN map")
+        app.wallet_to_exitable_sn_map      = wallet_to_exitable_sn_map
 
     # Get the accrued rewards values for each wallet
     accrued_rewards_json = oxen_rpc_get_accrued_rewards(omq, oxend).get()
@@ -501,7 +632,8 @@ def fetch_service_nodes(signum):
         # TODO It appears that doing the contract call is quite slow.
         app.wallet_map[address_key].rewards = rewards
 
-    app.logger.warning("{} Update SN finished".format(date_now_str()))
+    app.logger.info("{} Update SN finished".format(date_now_str()))
+
 
 @app.route("/info")
 def network_info():
@@ -540,6 +672,221 @@ def get_rewards_dict_for_wallet(eth_wal):
 
     return result
 
+
+class Contributor(TypedDict):
+    address: bytes
+    amount: int
+    reserved: int
+
+class Stake(TypedDict):
+    contract_id: int | None
+    contributors: list[Contributor]
+    deregistration_unlock_height: int | None
+    earned_downtime_blocks: int
+    last_reward_block_height: int | None
+    last_uptime_proof: int | None
+    operator_address: bytes
+    operator_fee: int | None
+    pubkey_bls: bytes
+    requested_unlock_height: int | None
+    service_node_pubkey: bytes
+    staked_balance: int | None
+    state: str
+
+class ErrorResponse:
+    def __init__(self, message: str):
+        self.error = message
+
+def parse_stake_info(
+        stake: dict,
+        wallet_address: ChecksumAddress,
+        confirmed_exited: bool = False,
+) -> Stake | ErrorResponse:
+    """
+    Parses stake information and returns a standardised dictionary of stake info.
+
+    Args:
+        stake (dict): The stake data containing various stake attributes.
+        wallet_address (str): The wallet address of the user.
+        confirmed_exited (bool, optional): Flag indicating if the stake has been confirmed as exited. Defaults to False.
+
+    Exceptions:
+        ValueError: If the stake state cannot be determined.
+
+    Returns:
+        dict: A dictionary containing the parsed stake information.
+    """
+    state = None
+    deregistration_unlock_height = None
+
+    try:
+        # Handles exit events
+        if 'exit_type' in stake:
+            exit_type = stake.get('exit_type')
+            if exit_type == 'exit':
+                state = (
+                    "Awaiting Exit"
+                    if stake.get('contract_id') and not confirmed_exited
+                    else "Exited"
+                )
+            elif exit_type == 'deregister':
+                state = "Deregistered"
+                deregistration_unlock_height = stake.get('deregistration_unlock_height')
+            else:
+                raise ValueError(f"Invalid exit type {exit_type}")
+        # Handles contract events
+        elif 'contract_state' in stake:
+            contract_state = stake.get('contract_state')
+            if contract_state == 'awaiting_contributors':
+                state = "Awaiting Contributors"
+            elif contract_state == 'cancelled':
+                state = "Cancelled"
+            elif contract_state == 'finalized':
+                raise ValueError("Finalized nodes must be filtered out before reaching this point")
+            else:
+                raise ValueError(f"Invalid contract state {contract_state}")
+        # Handles running node info
+        elif 'active' in stake and 'funded' in stake:
+            state = (
+                'Decommissioned'
+                if not stake.get("active") and stake.get("funded")
+                else 'Running'
+            )
+        elif 'state' in stake:
+            current_state = stake.get('state')
+            if current_state == 'Deregistered':
+                deregistration_unlock_height = stake.get('deregistration_unlock_height')
+            if confirmed_exited and current_state == 'Awaiting Exit':
+                state = 'Exited'
+            else:
+                state = current_state
+        else:
+            raise ValueError("Unable to determine node state")
+    except ValueError as e:
+        base_msg = f"Value Error while parsing stake state for stake: \n {stake}"
+        app.logger.error(f"{base_msg} \n Exception: {e}")
+        return ErrorResponse(base_msg)
+    except Exception as e:
+        base_msg = f"Exception while parsing stake state for stake: \n {stake}"
+        app.logger.error(f"{base_msg} \n Exception: {e}")
+        return ErrorResponse(base_msg)
+
+    # Process contributors and calculate staked balance
+    contributors = stake.get('contributors', [])
+    staked_balance = sum(
+        contributor.get('amount')
+        for contributor in contributors
+        if eth_format(contributor.get('address')) == wallet_address
+    ) or None
+
+    return {
+        'contract_id': stake.get('contract_id'),
+        'contributors': contributors,
+        'deregistration_unlock_height': deregistration_unlock_height,
+        'earned_downtime_blocks': stake.get('earned_downtime_blocks'),
+        'last_reward_block_height': stake.get('last_reward_block_height'),
+        'last_uptime_proof': stake.get('last_uptime_proof'),
+        'liquidation_height': stake.get('liquidation_height'),
+        'operator_address': stake.get('operator_address'),
+        'operator_fee': stake.get('portions_for_operator'),
+        'pubkey_bls': stake.get('pubkey_bls'),
+        'requested_unlock_height': stake.get('requested_unlock_height'),
+        'service_node_pubkey': stake.get('service_node_pubkey'),
+        'staked_balance': staked_balance,
+        'state': state,
+        'exited': confirmed_exited or state == 'Exited',
+    }
+
+
+@app.route("/stakes/<eth_wallet:eth_wal>")
+def get_stakes(eth_wal: str):
+    try:
+        if not eth_wal or not eth_utils.is_address(eth_wal):
+            raise ValueError("Invalid wallet address")
+
+        wallet_address = eth_format(eth_wal)
+        app.tracked_wallet_addresses.add(wallet_address)
+
+        # A contract id can only appear once across the lists
+        added_contract_ids = set()
+
+        parse_errors = []
+
+        app.logger.debug(f"Fetching stakes for {wallet_address}")
+        app.logger.debug(f"wallet_to_sn_map len: {len(app.wallet_to_sn_map)}")
+        app.logger.debug(f"contract_id_to_sn_map len: {len(app.contract_id_to_sn_map)}")
+        app.logger.debug(f"wallet_to_exitable_sn_map len: {len(app.wallet_to_exitable_sn_map)}")
+        app.logger.debug(f"contract_id_to_exitable_sn_map len: {len(app.contract_id_to_exitable_sn_map)}")
+
+        def handle_stakes(
+                address_to_stakes_map: dict[ChecksumAddress, set[int]],
+                contract_id_to_stake_map: dict[int, Stake],
+                output_list: list[Stake],
+                confirmed_exited=False,
+        ):
+            app.logger.debug(f"added_contract_ids: {added_contract_ids}")
+            for contract_id in address_to_stakes_map.get(wallet_address, []):
+                app.logger.debug(f"contract_id: {contract_id}")
+                if contract_id not in added_contract_ids:
+                    stake = contract_id_to_stake_map.get(contract_id)
+                    parsed_stake = parse_stake_info(stake, wallet_address, confirmed_exited)
+                    if isinstance(parsed_stake, ErrorResponse):
+                        parse_errors.append({
+                            'contract_id': contract_id,
+                            'error': parsed_stake.error
+                        })
+                    else:
+                        output_list.append(parsed_stake)
+                    added_contract_ids.add(contract_id)
+
+        stakes = []
+        handle_stakes(app.wallet_to_exitable_sn_map, app.contract_id_to_exitable_sn_map, stakes)
+        handle_stakes(app.wallet_to_sn_map, app.contract_id_to_sn_map, stakes)
+
+        if wallet_address not in app.wallet_to_historical_stakes_map:
+            # NOTE: This db call is only triggered once per wallet address, this is reset after the scheduled db read.
+            get_db_stakes_for_wallet(wallet_address)
+
+        historical_stakes = []
+        handle_stakes(app.wallet_to_historical_stakes_map, app.contract_id_to_historical_stakes_map, historical_stakes,
+                      confirmed_exited=True)
+
+        contracts = []
+        for contract_address in app.contributors.get(wallet_address, []):
+            details = app.contracts[contract_address]
+            contracts.append({
+                'contract_address': contract_address,
+                'details': details
+            })
+            if not details["finalized"]:
+                stakes.append(parse_stake_info(details, wallet_address))
+
+        return json_response({
+            "contracts": contracts,
+            "historical_stakes": historical_stakes,
+            "stakes": stakes,
+            "wallet": vars(get_rewards_dict_for_wallet(wallet_address)),
+            "error_stakes": parse_errors if len(parse_errors) > 0 else None
+        })
+    except ValueError as e:
+        app.logger.error(f"Exception: {e}")
+        return flask.abort(400, e)
+    except Exception as e:
+        app.logger.error(f"Exception: {e}")
+        return flask.abort(500, e)
+
+
+@app.route("/nodes")
+def get_nodes():
+    """
+    Returns a list of all nodes that are running.
+    """
+    nodes = []
+    for node in app.contract_id_to_sn_map.values():
+        nodes.append(parse_stake_info(node, node['operator_address']))
+    return json_response({"nodes": nodes})
+
+
 # export enum NODE_STATE {
 #   RUNNING = 'Running',
 #   AWAITING_CONTRIBUTORS = 'Awaiting Contributors',
@@ -557,60 +904,25 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
 
     sns   = []
     nodes = []
-    if wallet_str in app.wallet_to_sn_list:
-        for sn_index in app.wallet_to_sn_list[wallet_str]:
-            sn_info = app.sn_list[sn_index]
-            sns.append(sn_info)
-            balance = {c["address"]: c["amount"] for c in sn_info["contributors"]}.get(wallet_str, 0)
-            state   = 'Decommissioned' if not sn_info["active"] and sn_info["funded"] else 'Running'
-            nodes.append({
-                'balance':                 balance,
-                'contributors':            sn_info["contributors"],
-                'last_uptime_proof':       sn_info["last_uptime_proof"],
-                'contract_id':             sn_info["contract_id"],
-                'operator_address':        sn_info["operator_address"],
-                'operator_fee':            sn_info["portions_for_operator"],
-                'requested_unlock_height': sn_info["requested_unlock_height"],
-                'last_reward_block_height': sn_info["last_reward_block_height"],
-                'service_node_pubkey':     sn_info["service_node_pubkey"],
-                'pubkey_bls':              sn_info["pubkey_bls"],
-                'decomm_blocks_remaining': max(sn_info["earned_downtime_blocks"], 0),
-                'state':                   state,
-            })
-
-    if wallet_str in app.wallet_to_exitable_sn_list:
-        entry   = app.wallet_to_exitable_sn_list[wallet_str]
-
-        for exit_sn in entry:
-            balance = 0
-            for item in exit_sn['info']['contributors']:
-                if eth_format(item['address']) == wallet_str:
-                    balance += item["amount"]
-
-
-            if 'type' in exit_sn:
-                if exit_sn['type'] == 'exit':
-                    exit_sn['state'] = "Exited" if exit_sn['contract_id'] is None else "Awaiting Exit"
-                elif exit_sn['type'] == 'deregistered':
-                    exit_sn['state'] = "Deregistered"
-                exit_sn.pop('type')
-
-
-            nodes.append({
-                'balance':                 balance,
-                'contributors':            exit_sn['info']['contributors'],
-                # TODO: Missing 'last_uptime_proof':       exit_sn['info']['last_uptime_proof'],
-                'contract_id':             exit_sn['contract_id'],
-                'operator_address':        exit_sn['info']['operator_address'],
-                'operator_fee':            exit_sn['info']['portions_for_operator'],
-                'requested_unlock_height': exit_sn['info']['requested_unlock_height'],
-                'last_reward_block_height':exit_sn['info']['last_reward_block_height'],
-                'service_node_pubkey':     exit_sn['service_node_pubkey'],
-                'liquidation_height':      exit_sn['liquidation_height'],
-                'pubkey_bls':              exit_sn['info']['pubkey_bls'],
-                'state':                   exit_sn['state'],
-                'event_height':            exit_sn['height'],
-            })
+    for sn_index in app.wallet_to_sn_map.get(wallet_str, []):
+        sn_info = app.contract_id_to_sn_map[sn_index]
+        sns.append(sn_info)
+        balance = {c["address"]: c["amount"] for c in sn_info["contributors"]}.get(wallet_str, 0)
+        state   = 'Decommissioned' if not sn_info["active"] and sn_info["funded"] else 'Running'
+        nodes.append({
+            'balance':                 balance,
+            'contributors':            sn_info["contributors"],
+            'last_uptime_proof':       sn_info["last_uptime_proof"],
+            'contract_id':             sn_info["contract_id"],
+            'operator_address':        sn_info["operator_address"],
+            'operator_fee':            sn_info["portions_for_operator"],
+            'requested_unlock_height': sn_info["requested_unlock_height"],
+            'last_reward_block_height':sn_info["last_reward_block_height"],
+            'service_node_pubkey':     sn_info["service_node_pubkey"],
+            'pubkey_bls':              sn_info["pubkey_bls"],
+            'decomm_blocks_remaining': max(sn_info["earned_downtime_blocks"], 0),
+            'state':                   state,
+        })
 
     contracts = []
     if wallet_str in app.contributors:
@@ -619,19 +931,6 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
             contracts.append({
                 'contract_address': address,
                 'details': details
-            })
-            if details["finalized"]:
-                continue
-            state = 'Cancelled' if details["cancelled"] else 'Awaiting Contributors'
-            nodes.append({
-                'balance':                 details["contributions"].get(wallet_str, 0),
-                'contributors':            details["contributions"],
-                'last_uptime_proof':       0,
-                'operator_address':        details["contributor_addresses"][0],
-                'operator_fee':            details["service_node_params"]["fee"],
-                'requested_unlock_height': 0,
-                'service_node_pubkey':     details["service_node_params"]["serviceNodePubkey"],
-                'state':                   state,
             })
 
     # Setup the result
@@ -705,9 +1004,8 @@ def get_exit(ed25519_pubkey: bytes):
 def get_exit_liquidation_list():
     try:
         array = []
-        for item in app.wallet_to_exitable_sn_list.values():
-            for entry in item:
-                array.append(entry)
+        for item in app.contract_id_to_exitable_sn_map.values():
+            array.append(item)
 
         result = json_response({
             'result': array
@@ -732,6 +1030,241 @@ def get_liquidation(ed25519_pubkey: bytes):
     except TimeoutError:
         return flask.abort(408) # Request timeout
 
+
+def handle_stakes_row(
+        wallet_to_historical_stakes_map: dict[ChecksumAddress, set[int]],
+        contract_id_to_historical_stakes_map: dict[int, Stake],
+        sql_cur: sqlite3.Cursor,
+):
+    for row in sql_cur:
+        (
+            contract_id,
+            last_updated,
+            pubkey_bls,
+            deregistration_unlock_height,
+            earned_downtime_blocks,
+            last_reward_block_height,
+            last_uptime_proof,
+            operator_address,
+            operator_fee,
+            requested_unlock_height,
+            service_node_pubkey,
+            state,
+            contributor_address,
+            contributor_amount,
+        ) = row
+
+
+        contributor_adr = eth_format(contributor_address)
+
+        if contract_id not in contract_id_to_historical_stakes_map:
+            stake = {
+                'pubkey_bls': pubkey_bls,
+                'contract_id': contract_id,
+                'deregistration_unlock_height': deregistration_unlock_height,
+                'earned_downtime_blocks': earned_downtime_blocks,
+                'last_reward_block_height': last_reward_block_height,
+                'last_uptime_proof': last_uptime_proof,
+                'operator_address': eth_format(operator_address),
+                'operator_fee': operator_fee,
+                'requested_unlock_height': requested_unlock_height,
+                'service_node_pubkey': service_node_pubkey,
+                'state': state,
+                'contributors': [],
+            }
+            contract_id_to_historical_stakes_map[contract_id] = stake
+        else:
+            stake = contract_id_to_historical_stakes_map[contract_id]
+
+        # Add contributor info
+        contributor = {
+            'address': contributor_adr,
+            'amount': contributor_amount,
+        }
+        stake['contributors'].append(contributor)
+        wallet_to_historical_stakes_map.setdefault(contributor_adr, set()).add(contract_id)
+
+
+def get_db_stakes_for_wallet(wallet_address: ChecksumAddress):
+    """
+    This exists to get the stakes for a wallet that is not in the tracked list. This should only be used when we need
+    the data but the timed database read hasn't executed yet with the address in the tracked list. A wallet address
+    can only call this once in between scheduled database read times.
+    """
+    app.logger.debug("{} get_db_stakes_for_wallet: {}".format(date_now_str(), wallet_address))
+    if wallet_address in app.tmp_db_trigger_wallet_addresses:
+        return
+
+    app.tmp_db_trigger_wallet_addresses.add(wallet_address)
+
+    with app.app_context(), get_sql() as sql:
+        cur = sql.cursor()
+        cur.execute(
+            """
+            SELECT s.*,
+                   sc_contributors.address AS contributor_address,
+                   sc_contributors.amount AS contributor_amount
+            FROM stakes s
+                JOIN stake_contributions sc_requestor ON sc_requestor.contract_id = s.id
+                JOIN stake_contributions sc_contributors ON sc_contributors.contract_id = s.id
+            WHERE sc_requestor.address = ?;
+            """,
+            (address_to_bytes(wallet_address),),
+        )
+
+        handle_stakes_row(app.wallet_to_historical_stakes_map, app.contract_id_to_historical_stakes_map, cur)
+
+
+def address_to_bytes(address: str) -> bytes:
+    if address.startswith("0x"):
+        return bytes.fromhex(address[2:])
+    else:
+        return bytes.fromhex(address)
+
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
+@timer(15)
+def get_db_stakes(signum):
+    app.logger.info("{} Get stakes db start".format(date_now_str()))
+    wallet_to_historical_stakes_map: dict[ChecksumAddress, set[int]] = {}  # (Wallet address -> Set of contract_ids)
+    contract_id_to_historical_stakes_map: dict[int, Stake] = {}  # (contract_ids -> Stake Info)
+
+    for address_chunk in chunks(list(app.tracked_wallet_addresses), 999):  # SQLite default parameter limit is 999
+        placeholders = ','.join(['?'] * len(address_chunk))
+        with app.app_context(), get_sql() as sql:
+            cur = sql.cursor()
+            cur.execute(f"""
+            SELECT DISTINCT s.*,
+               sc_contributors.address AS contributor_address,
+               sc_contributors.amount AS contributor_amount
+            FROM stakes s
+                JOIN stake_contributions sc_requestor ON sc_requestor.contract_id = s.id
+                JOIN stake_contributions sc_contributors ON sc_contributors.contract_id = s.id
+            WHERE sc_requestor.address IN ({placeholders});
+            """,
+                        address_chunk,
+                        )
+
+            handle_stakes_row(wallet_to_historical_stakes_map, contract_id_to_historical_stakes_map, cur)
+
+    if len(wallet_to_historical_stakes_map) > 0:
+        app.wallet_to_historical_stakes_map = wallet_to_historical_stakes_map
+        app.contract_id_to_historical_stakes_map = contract_id_to_historical_stakes_map
+
+    app.tmp_db_trigger_wallet_addresses.clear()
+
+    app.logger.info("{} Get stakes db finish".format(date_now_str()))
+
+
+# Debug function to load all contributor addresses into the tracked wallet addresses set
+def load_contributor_addresses_into_tracked_wallet_addresses():
+    with app.app_context(), get_sql() as sql:
+        cur = sql.cursor()
+        cur.execute("SELECT DISTINCT address FROM stake_contributions")
+        for row in cur:
+            app.tracked_wallet_addresses.add(row[0])
+
+# Debug function to recover non-contributor stakes. This gets all stakes that are not in the stake_contributions table and adds them to the stake_contributions using the operator address as the contributor address.
+def recover_non_contributor_stakes():
+    with app.app_context(), get_sql() as sql:
+        cur = sql.cursor()
+        added_stakes = set()
+        cur.execute("SELECT DISTINCT contract_id, address FROM stake_contributions")
+        for contract_id, address in cur:
+            added_stakes.add((contract_id, address))
+
+        cur.execute("SELECT DISTINCT id, operator_address FROM stakes")
+        stakes_to_recover = set()
+        for contract_id, operator_address in cur:
+            if (contract_id, operator_address) in added_stakes:
+                continue
+            stakes_to_recover.add((contract_id, operator_address))
+
+        for contract_id, operator_address in stakes_to_recover:
+            app.logger.debug(f"Recovering stake for contract_id: {contract_id}, operator_address: {operator_address}")
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO stake_contributions (contract_id, address, amount)
+                VALUES                                     (?,           ?,       ?)
+                """,
+                (
+                    contract_id,
+                    operator_address,
+                    20000000000000,
+                )
+            )
+
+@timer(30)
+def update_service_node_contract_ids(signum) -> None:
+    """
+    Update the map of service node contract ids to BLS public keys. This fetches the list of all service nodes from the
+    Service Node Rewards contract and maps them to their corresponding contract ids.
+    """
+    app.logger.info("{} Updating service node contract ids".format(date_now_str()))
+    [ids, bls_keys] = app.service_node_rewards.allServiceNodeIDs()
+    app.logger.debug(f"Added {len(ids)} service node contract ids")
+    app.bls_pubkey_to_contract_id_map = {f"{x:064x}{y:064x}": contract_id for contract_id, (x, y) in zip(ids, bls_keys)}
+    app.logger.info("{} Updating service node contract ids finish. Nodes: {}".format(date_now_str(),
+                                                                                     len(app.bls_pubkey_to_contract_id_map)))
+
+
+@timer(60)
+def insert_updated_db_stakes(signum):
+    """
+    Inserts or updates the stakes in the database.
+    """
+    app.logger.info("{} Insert or update stakes db start".format(date_now_str()))
+    added_contract_ids = set()
+    with app.app_context(), get_sql() as sql:
+        cur = sql.cursor()
+        for node in chain(app.contract_id_to_exitable_sn_map.values(), app.contract_id_to_sn_map.values()):
+            stake = parse_stake_info(node, node.get('operator_address'))
+            contract_id = stake.get('contract_id')
+            if contract_id in added_contract_ids:
+                continue
+            added_contract_ids.add(contract_id)
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO stakes (id, last_updated, pubkey_bls, deregistration_unlock_height, earned_downtime_blocks, last_reward_block_height, last_uptime_proof, operator_address, operator_fee, requested_unlock_height, service_node_pubkey, state)
+                                       VALUES (?,  ?,            ?,          ?,                            ?,                      ?,                        ?,                 ?,                ?,            ?,                        ?,                  ?)
+                """,
+                (
+                    contract_id,
+                    datetime.datetime.now().timestamp(),
+                    stake['pubkey_bls'],
+                    stake['deregistration_unlock_height'],
+                    stake['earned_downtime_blocks'],
+                    stake['last_reward_block_height'],
+                    stake['last_uptime_proof'],
+                    address_to_bytes(stake['operator_address']),
+                    stake['operator_fee'],
+                    stake['requested_unlock_height'],
+                    stake['service_node_pubkey'],
+                    stake['state'],
+                )
+            )
+
+            # Create the stake contributions entry
+            for contributor in stake['contributors']:
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO stake_contributions (contract_id, address, amount)
+                    VALUES                                     (?,           ?,       ?)
+                    """,
+                    (
+                        contract_id,
+                        address_to_bytes(contributor['address']),
+                        contributor.get('amount'),
+                    )
+                )
+    added_contract_ids.clear()
+    app.logger.info("{} Insert or update stakes db finish".format(date_now_str()))
+
 # Decodes `x` into a bytes of length `length`.  `x` should be hex or base64 encoded, without
 # whitespace.  Both regular and "URL-safe" base64 are accepted.  Padding is optional for base64
 # values.  Throws ParseError if the input is invalid or of the wrong size.  `length` must be at
@@ -743,7 +1276,7 @@ def decode_bytes(k, x, length):
     b64_unpadded = (length * 4 + 2) // 3
     b64_padded = (length + 2) // 3 * 4
 
-    print(f"DEBGUG: {len(x)}, {hex_len}")
+    app.logger.debug(f"{len(x)}, {hex_len}")
     if len(x) == hex_len and all(c in string.hexdigits for c in x):
         return bytes.fromhex(x)
     if len(x) in (b64_unpadded, b64_padded):
@@ -784,11 +1317,11 @@ def raw_eth_addr(k, v):
     raise ParseError(k, "not an ETH address")
 
 
-def eth_format(addr: Union[bytes, str]):
+def eth_format(addr: Union[bytes, str]) -> ChecksumAddress:
     try:
         return eth_utils.to_checksum_address(addr)
     except ValueError:
-        raise ParseError("Invalid ETH address")
+        raise ParseError(addr, "Invalid ETH address")
 
 
 class SNSignatureValidationError(ValueError):
@@ -1093,7 +1626,7 @@ def format_currency(units: int, decimal: int = 9):
     it does not use floating point math or involve any truncation or rounding
     """
     base = 10**decimal
-    print(f"units: {units}, base: {base}, decimal: {decimal}, {units//base}")
+    app.logger.debug(f"units: {units}, base: {base}, decimal: {decimal}, {units//base}")
     frac = units % base
     frac = "" if frac == 0 else f".{frac:0{decimal}d}".rstrip("0")
     return f"{units // base}{frac}"
@@ -1337,3 +1870,8 @@ def validate_registration():
         ) // remaining_spots
 
     return json_response(res)
+
+def bootstrap():
+    update_service_node_contract_ids(None)
+
+bootstrap()
