@@ -95,6 +95,14 @@ class ServiceNodeContribution:
                 'fee': params[3]
         }
 
+    def get_operator(self):
+        """
+        returns the service node operator
+        """
+        contributor_addresses = self.get_contributor_addresses()
+        return contributor_addresses[0]
+
+
     def get_contributor_addresses(self):
         """
         Get the list of contributor addresses.
