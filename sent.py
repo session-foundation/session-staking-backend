@@ -29,9 +29,6 @@ from contracts.service_node_rewards              import ServiceNodeRewardsInterf
 
 TOKEN_NAME = "SENT"
 
-# Make a dict of config.* to pass to templating
-conf = {x: getattr(config, x) for x in dir(config) if not x.startswith("__")}
-
 class WalletInfo():
     def __init__(self):
         self.rewards          = 0 # Atomic SENT
@@ -58,12 +55,12 @@ def get_oxen_rpc_bls_exit_liquidation_list(omq, oxend):
 class App(flask.Flask):
     def __init__(self):
         super().__init__(__name__)
-        self.logger.setLevel(config.LOG_LEVEL)
+        self.logger.setLevel(config.backend.log_level)
 
-        self.service_node_rewards              = ServiceNodeRewardsInterface(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_REWARDS_ADDRESS)
-        self.reward_rate_pool                  = RewardRatePoolInterface(config.PROVIDER_ENDPOINT, config.REWARD_RATE_POOL_ADDRESS)
-        self.service_node_contribution_factory = ServiceNodeContributionFactory(config.PROVIDER_ENDPOINT, config.SERVICE_NODE_CONTRIBUTION_FACTORY_ADDRESS)
-        self.service_node_contribution         = ContributorContractInterface(config.PROVIDER_ENDPOINT)
+        self.service_node_rewards              = ServiceNodeRewardsInterface(config.backend.provider_url,    config.backend.sn_rewards_addr)
+        self.reward_rate_pool                  = RewardRatePoolInterface(config.backend.provider_url,        config.backend.reward_rate_pool_addr)
+        self.service_node_contribution_factory = ServiceNodeContributionFactory(config.backend.provider_url, config.backend.sn_contrib_factory_addr)
+        self.service_node_contribution         = ContributorContractInterface(config.backend.provider_url)
 
         self.bls_pubkey_to_contract_id_map: dict[str, int]      = {} # (BLS public key -> contract_id)
 
@@ -85,7 +82,7 @@ class App(flask.Flask):
         git_rev                                = subprocess.run(["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True)
         self.git_rev                           = git_rev.stdout.strip() if git_rev.returncode == 0 else "(unknown)"
 
-        sql = sqlite3.connect(config.sqlite_db)
+        sql = sqlite3.connect(config.backend.sqlite_db)
         cursor = sql.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
@@ -185,7 +182,7 @@ app = App()
 
 def get_sql():
     if "db" not in flask.g:
-        flask.g.sql = sqlite3.connect(config.sqlite_db)
+        flask.g.sql = sqlite3.connect(config.backend.sqlite_db)
     return flask.g.sql
 
 def date_now_str() -> str:
@@ -206,33 +203,22 @@ class Hex64Converter(BaseConverter):
 
 
 eth_regex = "0x[0-9a-fA-F]{40}"
-
-
 class EthConverter(BaseConverter):
     def __init__(self, url_map):
         super().__init__(url_map)
         self.regex = eth_regex
 
 
-b58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-oxen_wallet_regex = (
-    f"T[{b58}]{{96}}" if config.testnet
-    else f"dV[{b58}]{{95}}" if config.devnet
-    else f"ST[{b58}]{{95}}" if config.stagenet
-    else f"L[{b58}]{{94}}"
-)
-
-
 class OxenConverter(BaseConverter):
     def __init__(self, url_map):
         super().__init__(url_map)
-        self.regex = oxen_wallet_regex
+        self.regex = config.backend.oxen_wallet_regex
 
 
 class OxenEthConverter(BaseConverter):
     def __init__(self, url_map):
         super().__init__(url_map)
-        self.regex = f"{eth_regex}|{oxen_wallet_regex}"
+        self.regex = f"{eth_regex}|{config.backend.oxen_wallet_regex}"
 
 
 app.url_map.converters["hex64"]         = Hex64Converter
