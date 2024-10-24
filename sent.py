@@ -310,21 +310,6 @@ def hexify(container):
             hexify(v)
 
 
-
-def get_staking_requirements():
-    omq, oxend = omq_connection()
-    result = FutureJSON(omq, oxend, "rpc.get_staking_requirement").get()
-
-    staking_requirement = result['staking_requirement']
-
-    return {
-        'staking_requirement': staking_requirement,
-        'min_operator_stake': staking_requirement // 4,
-        # TODO: expose and retrieve this from oxend rather than hard coding it here.
-        'max_stakers': 10
-    }
-
-
 def get_timers_hours(network_type: str):
     match network_type:
         case 'testnet' | 'stagenet' | 'devnet' | 'localdev' | 'fakechain':
@@ -360,38 +345,24 @@ def blocks_in(seconds: int):
     return int(seconds / TARGET_BLOCK_TIME)
 
 
-def get_info():
-    omq, oxend = omq_connection()
-    info = FutureJSON(omq, oxend, "rpc.get_info").get()
-    staking_requirements = get_staking_requirements()
+def get_info() -> dict:
+    omq, oxend                     = omq_connection()
+    info: dict | None              = FutureJSON(omq, oxend, "rpc.get_info").get()
+    blk_header_result: dict | None = FutureJSON(omq, oxend, 'rpc.get_last_block_header', args={'fill_pow_hash': False, 'get_tx_hashes': False }).get()
 
-    # TODO: get_info is returning the wrong top_block_hash, it isn't _actually_
-    # the top block hash in stagenet atleast. Mainnet looks like it's producing
-    # the correct values.
-    result = {
-        **{
-            k: v
-            for k, v in info.items()
-            if k in ('nettype', 'hard_fork', 'version')
-        },
-        **{
-            k: v
-            for k, v in staking_requirements.items()
-        },
-    }
+    result: dict                        = {}
+    result['nettype']                   = info['nettype']
+    result['hard_fork']                 = info['hard_fork']
+    result['version']                   = info['version']
+    result['block_hash']                = info['top_block_hash']
+    result['staking_requirement']       = info['staking_requirement']
+    result['max_stakers']               = info['max_contributors']
+    result['min_operator_contribution'] = info['min_operator_contribution']
 
-    blk_header_result = FutureJSON(omq,
-                                   oxend,
-                                   'rpc.get_last_block_header',
-                                   args={
-                                       'fill_pow_hash': False,
-                                       'get_tx_hashes': False
-                                   }).get()
-
-    blk_header                = blk_header_result['block_header']
-    result['block_timestamp'] = blk_header['timestamp']
-    result['block_height']    = blk_header['height']
-    result['block_hash']      = blk_header['hash']
+    blk_header                          = blk_header_result['block_header']
+    result['block_timestamp']           = blk_header['timestamp']
+    result['block_height']              = blk_header['height']
+    result['block_hash']                = blk_header['hash']
     return result
 
 
@@ -1665,8 +1636,8 @@ def error_response(code, **err):
             # For a solo node that doesn't contribute the exact requirement
             msg = f"Invalid operator stake: exactly {format_currency(err['required'])} {TOKEN_NAME} is required for a solo node"
         case "insufficient_op_stake":
-            staking_requirements = get_staking_requirements()
-            msg = f"Insufficient operator stake: at least {format_currency(err['minimum'])} ({err['minimum'] / staking_requirements['staking_requirement'] * 100}%) is required"
+            network_info = get_info()
+            msg = f"Insufficient operator stake: at least {format_currency(err['minimum'])} ({err['minimum'] / network_info['staking_requirement'] * 100}%) is required"
         case "invalid_contract_addr":
             msg = "Invalid contract address"
         case "invalid_res_addr":
@@ -1721,11 +1692,10 @@ def validate_registration():
     indicating the error that was detected.  See `error_response` for details.
     """
 
-    staking_requirements = get_staking_requirements()
-
-    max_stake = staking_requirements['staking_requirement']
-    min_operator_stake = staking_requirements['min_operator_stake']
-    max_stakers = staking_requirements['max_stakers']
+    network_info       = get_info()
+    max_stake          = network_info['staking_requirement']
+    min_operator_stake = network_info['min_operator_stake']
+    max_stakers        = network_info['max_stakers']
 
     try:
         params = parse_query_params(
