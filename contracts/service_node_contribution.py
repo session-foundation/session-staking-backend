@@ -40,12 +40,12 @@ class ServiceNodeContribution:
         """
         return self.contract.functions.contributions(Web3.to_checksum_address(contributor_address)).call()
 
-    def is_finalized(self):
+    def status(self):
         """
         Check if the service node is finalized.
         :return: True if the service node is finalized, otherwise False.
         """
-        return self.contract.functions.finalized().call()
+        return self.contract.functions.status().call()
 
     def is_cancelled(self):
         """
@@ -99,34 +99,24 @@ class ServiceNodeContribution:
         """
         returns the service node operator
         """
-        contributor_addresses = self.get_contributor_addresses()
-        return contributor_addresses[0]
+        return self.contract.functions.operator().call()
 
+    def get_contributions(self):
+        contributions = self.contract.functions.getContributions().call()
+        # (address[] memory addrs, address[] memory beneficiaries, uint256[] memory contribs)
+        addresses = contributions[0]
+        beneficiaries = contributions[1]
+        contributions = contributions[2]
 
-    def get_contributor_addresses(self):
-        """
-        Get the list of contributor addresses.
-        :return: List of addresses of contributors.
-        """
-        addresses = []
-        for index in range(self.contract.functions.maxContributors().call()):
-            try:
-                addresses.append(self.contract.functions.contributorAddresses(index).call())
-            except:
-                continue
+        contributions_list = []
+        for i in range(len(addresses)):
+            contributions_list.append({
+                "address": addresses[i],
+                "amount": contributions[i],
+                "beneficiary": beneficiaries[i]
+            })
+        return contributions_list
 
-        return addresses
-
-    def get_individual_contributions(self):
-        """
-        Retrieve contributions for each contributor.
-        :return: Dictionary mapping contributor addresses to their contributions.
-        """
-        contributor_addresses = self.get_contributor_addresses()
-        contributions = {
-            address: self.get_contributor_contribution(address) for address in contributor_addresses
-        }
-        return contributions
 
 # Example usage:
 # provider_url = 'http://127.0.0.1:8545'
