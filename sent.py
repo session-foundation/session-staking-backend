@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+from time import perf_counter
+
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 import flask
 import string
@@ -75,8 +79,11 @@ class App(flask.Flask):
         self.wallet_to_historical_stakes_map: dict[ChecksumAddress, set[int]]   = {} # (0x wallet address -> Set of contract_ids)
         self.contract_id_to_historical_stakes_map: dict[int, Stake]             = {} # (contract_id -> Stake Info)
 
+
         self.contributors                      = {}
-        self.contracts                         = {}
+
+        self.contracts_stale_timestamp         = 0
+        self.contracts                         = None
 
         self.wallet_map                        = {} # (Binary ETH wallet address -> WalletInfo)
         git_rev                                = subprocess.run(["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True)
@@ -117,18 +124,48 @@ class App(flask.Flask):
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS contribution_contracts (
-                id INTEGER PRIMARY KEY NOT NULL,
-                contract_address TEXT NOT NULL,
-                status INTEGER DEFAULT 1,
+                contract_address BLOB PRIMARY KEY NOT NULL,
+                pubkey_ed25519 BLOB NOT NULL,
+                pubkey_bls BLOB NOT NULL,
+                sig_ed25519 BLOB NOT NULL,
+                operator_address TEXT NOT NULL,
+                fee INTEGER NOT NULL,
+                status INTEGER NOT NULL,
+                total_contributions INTEGER NOT NULL DEFAULT 0,
+                
                 timestamp FLOAT NOT NULL DEFAULT ((julianday('now') - 2440587.5)*86400.0), /* unix epoch */
 
-                CHECK(length(contract_address) == 42)  -- Assuming Ethereum addresses
+                CHECK(length(contract_address) == 20)
             );
         """)
 
         cursor.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS contribution_contract_address_idx ON contribution_contracts(contract_address);
          """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS contribution_contracts_contributions (
+                contract_address BLOB NOT NULL,
+                address BLOB NOT NULL,
+                beneficiary_address BLOB NOT NULL,
+                amount INTEGER NOT NULL,
+                reserved INTEGER,
+                
+                CHECK(length(address) == 20),
+                
+                FOREIGN KEY (contract_address) REFERENCES contribution_contracts(contract_address),
+                PRIMARY KEY (contract_address, address)
+            );
+        """)
+
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_contribution_contracts_contributions_contract_address_address ON contribution_contracts_contributions(contract_address, address);
+            """)
+
+        cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_contribution_contracts_contributions_contract_address_address_amount ON contribution_contracts_contributions(contract_address, address, amount);
+                """)
+
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS stakes (
@@ -376,71 +413,272 @@ def json_response(vals):
 
     return flask.jsonify({**vals, "network": get_info(), "t": time.time()})
 
-@timer(10, target="worker1")
-def fetch_contribution_contracts(signum):
-    app.logger.info("{} Fetch contribution contracts start".format(date_now_str()))
-    with app.app_context(), get_sql() as sql:
-        cursor = sql.cursor()
 
-        new_contracts = app.service_node_contribution_factory.get_latest_contribution_contract_events()
+def get_frequently_update_contract_details(address: str):
+    try:
+        contract_interface = app.service_node_contribution.get_contract_instance(address)
 
-        for event in new_contracts:
-            contract_address = event.args.contributorContract
-            cursor.execute(
-                """
-                INSERT INTO contribution_contracts (contract_address) VALUES (?)
-                ON CONFLICT (contract_address) DO NOTHING
-                """,
-                (contract_address,)
-            )
-        sql.commit()
-    app.logger.info("{} Fetch contribution contracts finish".format(date_now_str()))
+        contributions = contract_interface.get_contributions()
+        status = contract_interface.status()
+
+        total_contributions = 0
+        for contribution in contributions:
+            amount = contribution.get('amount')
+            total_contributions += amount
+
+        return address, status, contributions, total_contributions
+    except Exception as e:
+        app.logger.error("Error occurred while updating contract info: {}".format(e))
+        return None
+
+
+def get_base_contract_details(address: str):
+    contract_interface = app.service_node_contribution.get_contract_instance(address)
+    # Fetch statuses and other details
+    # TODO: this does 3 network requests one after the other, we need to improve this
+    operator = contract_interface.get_operator()
+    pubkey_bls = contract_interface.get_bls_pubkey()
+    service_node_params = contract_interface.get_service_node_params()
+    service_node_pubkey = service_node_params.get('serviceNodePubkey')
+    service_node_signature = service_node_params.get('serviceNodeSignature')
+    fee = service_node_params.get('fee')
+
+    # TODO: this does 2 network requests one after the other, we need to improve this
+    _, status, contributions, total_contributions = get_frequently_update_contract_details(address)
+
+    return address, operator, pubkey_bls, service_node_pubkey, service_node_signature, fee, status, contributions, total_contributions
+
+
+get_frequently_update_contract_details_loop = asyncio.get_event_loop()
+
+async def update_contributor_contracts(addresses):
+    results = []
+    with ThreadPoolExecutor(max_workers=config.backend.thread_pool_max_workers) as executor:
+        get_frequently_update_contract_details_loop = asyncio.get_event_loop()
+        futures = [
+            get_frequently_update_contract_details_loop.run_in_executor(
+                executor,
+                get_frequently_update_contract_details,
+                address
+            ) for address in addresses
+        ]
+        for future in asyncio.as_completed(futures):
+            try:
+                # This will raise an exception if the thread raised an exception
+                result = await future
+                results.append(result)
+
+            except Exception as e:
+                app.logger.error("Error occurred in thread: {}".format(e))
+    return results
+
+
+get_base_contract_details_loop = asyncio.get_event_loop()
+
+
+async def get_base_contract_details_contracts(addresses):
+    results = []
+    with ThreadPoolExecutor(max_workers=config.backend.thread_pool_max_workers) as executor:
+        get_base_contract_details_loop = asyncio.get_event_loop()
+        futures = [
+            get_base_contract_details_loop.run_in_executor(
+                executor,
+                get_base_contract_details,
+                address
+            ) for address in addresses
+        ]
+        for future in asyncio.as_completed(futures):
+            try:
+                # This will raise an exception if the thread raised an exception
+                result = await future
+                if result is None:
+                    continue
+                results.append(result)
+            except Exception as e:
+                app.logger.error("Error occurred in thread: {}".format(e))
+    return results
+
 
 @timer(30)
-def fetch_contract_statuses(signum):
+def process_new_contribution_contracts(signum):
+    app.logger.info("{} Process new contribution contracts start".format(date_now_str()))
+    perf_start = perf_counter()
+
+    new_contracts = app.service_node_contribution_factory.get_latest_contribution_contract_events()
+
+    app.logger.debug('Found {} new contract events'.format(len(new_contracts)))
+
+    addresses = []
+    for event in new_contracts:
+        contract_address = event.args.contributorContract
+        if contract_address is None:
+            continue
+        addresses.append(contract_address)
+
+    results = get_base_contract_details_loop.run_until_complete(get_base_contract_details_contracts(addresses))
+
+    with app.app_context(), get_sql() as sql:
+        cursor = sql.cursor()
+        for details in results:
+            if details is None:
+                app.logger.warning("No details for new contract")
+                continue
+
+            address, operator, pubkey_bls, service_node_pubkey, service_node_signature, fee, status, contributions, total_contributions = details
+            contract_address_bytes = address_to_bytes(address)
+
+            cursor.execute(
+                """
+                INSERT INTO contribution_contracts (contract_address, pubkey_ed25519, pubkey_bls, sig_ed25519, operator_address, fee, status, total_contributions) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (contract_address) DO NOTHING
+                """,
+                (contract_address_bytes, service_node_pubkey, pubkey_bls, service_node_signature, operator, fee, status,
+                 total_contributions)
+            )
+
+            for contributor in contributions:
+                stake_address = address_to_bytes(contributor.get('address'))
+                beneficiary_address = address_to_bytes(contributor.get('beneficiary'))
+                amount = contributor.get('amount')
+
+                cursor.execute(
+                    """
+                    INSERT INTO contribution_contracts_contributions (contract_address, address, beneficiary_address, amount) VALUES (?, ?, ?, ?)
+                    """,
+                    (contract_address_bytes, stake_address, beneficiary_address, amount)
+                )
+
+        sql.commit()
+
+    perf_end = perf_counter()
+    perf_diff = perf_end - perf_start
+
+    app.logger.info("{} Process new contribution contracts end, took: {}s".format(date_now_str(), perf_diff))
+
+
+# // Track the status of the multi-contribution contract. At any point in the
+# // contract's lifetime, `reset` can be invoked to set the contract back to
+# // `WaitForOperatorContrib`.
+# enum Status {
+#     // Contract is initialised w/ no contributions. Call `contributeFunds`
+#     // to transition into `OpenForPublicContrib`
+#     WaitForOperatorContrib, # 0
+#
+#     // Contract has been initially funded by operator. Public and reserved
+#     // contributors can now call `contributeFunds`. When the contract is
+#     // collaterialised with exactly the staking requirement, the contract
+#     // transitions into `WaitForFinalized` state.
+#     OpenForPublicContrib, # 1
+#
+#     // Operator must invoke `finalizeNode` to transfer the tokens and the
+#     // node registration details to the `stakingRewardsContract` to
+#     // transition to `Finalized` state.
+#     WaitForFinalized, # 2
+#
+#     // Contract interactions are blocked until `reset` is called.
+#     Finalized # 3
+# }
+
+def parse_contributor_contract_status(status: int):
+    if status == 0 or status == 1:
+        return "awaiting_contributors"
+    elif status == 2:
+        return "finalizing"
+    elif status == 3:
+        return "finalized"
+    else:
+        raise ValueError(f"Invalid contributor contract status: {status}")
+
+
+CONTRACT_STATUS_UPDATE_TIME = 30
+
+
+@timer(CONTRACT_STATUS_UPDATE_TIME)
+def update_contract_details(signum):
     app.logger.info("{} Update Contract Statuses Start".format(date_now_str()))
+    perf_start = perf_counter()
+
+    addresses = []
     with app.app_context(), get_sql() as sql:
         cursor = sql.cursor()
         cursor.execute("SELECT contract_address FROM contribution_contracts")
-        app.contributors = {}
-        app.contracts = {}
+        for address, in cursor:
+            addresses.append(eth_format(address))
 
-        for (contract_address,) in cursor:
-            contract_interface = app.service_node_contribution.get_contract_instance(contract_address)
+    result = get_frequently_update_contract_details_loop.run_until_complete(update_contributor_contracts(addresses))
 
-            # Fetch statuses and other details
-            is_finalized        = contract_interface.is_finalized()
-            is_cancelled        = contract_interface.is_cancelled()
-            pubkey_bls          = contract_interface.get_bls_pubkey()
-            service_node_params = contract_interface.get_service_node_params()
-            #contributor_addresses = contract_interface.get_contributor_addresses()
-            total_contributions = contract_interface.total_contribution()
-            contributions       = contract_interface.get_individual_contributions()
-            operator            = contract_interface.get_operator()
+    with app.app_context(), get_sql() as sql:
+        cursor = sql.cursor()
+        for details in result:
+            if details is None:
+                app.logger.warning("No details for contract")
+                continue
+            address, status, contributions, total_contributions = details
+            contract_address_bytes = address_to_bytes(address)
+            cursor.execute(
+                """
+                UPDATE contribution_contracts SET status = ?, total_contributions=? WHERE contract_address = ?
+                """,
+                (status, total_contributions, contract_address_bytes)
+            )
 
-            app.contracts[contract_address] = {
-                'contract_state': 'finalized' if is_finalized else 'cancelled' if is_cancelled else 'awaiting_contributors',
-                'finalized': is_finalized,
-                'cancelled': is_cancelled,
-                'pubkey_bls': pubkey_bls,
-                'fee': service_node_params['fee'],
-                'service_node_pubkey': service_node_params['serviceNodePubkey'],
-                'service_node_signature': service_node_params['serviceNodeSignature'],
-                'contributions': [
-                    {"address": addr, "amount": amt} for addr, amt in contributions.items()
-                ],
-                'operator': operator,
-                'total_contributions': total_contributions,
+            for contributor in contributions:
+                stake_address = address_to_bytes(contributor.get('address'))
+                beneficiary_address = address_to_bytes(contributor.get('beneficiary'))
+                amount = contributor.get('amount')
+
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO contribution_contracts_contributions (contract_address, address, beneficiary_address, amount) VALUES (?, ?, ?, ?)
+                    """,
+                    (contract_address_bytes, stake_address, beneficiary_address, amount)
+                )
+
+        sql.commit()
+
+    perf_end = perf_counter()
+    perf_diff = perf_end - perf_start
+
+    if perf_diff > CONTRACT_STATUS_UPDATE_TIME:
+        app.logger.warning("{} Update Contract Statuses Finish, took: {} seconds".format(date_now_str(), perf_diff))
+    else:
+        app.logger.info("{} Update Contract Statuses Finish, took: {} seconds".format(date_now_str(), perf_diff))
+
+
+def get_contribution_contracts():
+    if time.time() < app.contracts_stale_timestamp and app.contracts is not None:
+        return app.contracts
+
+    contracts = {}
+    with app.app_context(), get_sql() as sql:
+        cursor = sql.cursor()
+        cursor.execute(
+            "SELECT contract_address, pubkey_ed25519, pubkey_bls, sig_ed25519, operator_address, fee, status, total_contributions FROM contribution_contracts")
+        for contract_address, service_node_pubkey, pubkey_bls, service_node_signature, operator, fee, status, total_contributions in cursor:
+            contracts[contract_address] = {
+                "service_node_pubkey": service_node_pubkey,
+                "pubkey_bls": pubkey_bls,
+                "service_node_signature": service_node_signature,
+                "operator": operator,
+                "fee": fee,
+                "contract_state": parse_contributor_contract_status(status),
+                "total_contributions": total_contributions
             }
 
-            for address in contributions.keys():
-                wallet_key = eth_format(address)
-                if address not in app.contributors:
-                    app.contributors[wallet_key] = []
-                if contract_address not in app.contributors[wallet_key]:
-                    app.contributors[wallet_key].append(contract_address)
+        cursor.execute(
+            "SELECT contract_address, address, beneficiary_address, amount FROM contribution_contracts_contributions")
+        for contract_address, address, beneficiary_address, amount in cursor:
+            if contract_address not in contracts:
+                continue
+            contracts[contract_address].setdefault("contributors", []).append({
+                "address": address,
+                "beneficiary": beneficiary_address,
+                "amount": amount
+            })
 
-    app.logger.info("{} Update Contract Statuses Finish".format(date_now_str()))
+    app.contracts = contracts
+    app.contracts_stale_timestamp = time.time() + config.backend.stale_time_seconds
+    return app.contracts
 
 
 @timer(10)
@@ -904,15 +1142,15 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
 
 @app.route("/nodes/open")
 def get_contributable_contracts():
+    nodes = get_contribution_contracts()
     return json_response({
         "nodes": [
             {
                 "contract": addr,
                 **details
             }
-            for addr, details in app.contracts.items()
-            if not details['finalized'] and not details['cancelled']
-            # FIXME: we should also filter out reserved contracts
+            for addr, details in nodes.items()
+            if details.get('contract_state') == 'awaiting_contributors'
         ]
     })
 

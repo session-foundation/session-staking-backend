@@ -17,6 +17,8 @@ B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 class Backend:
     sqlite_db:               str = 'sent-backend.db'
+    thread_pool_max_workers: int = 10
+    stale_time_seconds:      int = 30
     rpc:                     str = ''
     oxen_wallet_regex:       str = ''
     reward_rate_pool_addr:   str = '0x0000000000000000000000000000000000000000'
@@ -55,7 +57,7 @@ stagenet_backend.sqlite_db               = 'ssb-stagenet.db'
 stagenet_backend.rpc                     = 'ipc://oxend/stagenet.sock'
 stagenet_backend.oxen_wallet_regex       = f"ST[{B58_ALPHABET}]{{95}}"
 stagenet_backend.reward_rate_pool_addr   = '0x38cD8D3F93d591C18cf26B3Be4CB2c872aC37953'
-stagenet_backend.sn_contrib_factory_addr = '0xF1bc0f928970C4ce891970F23c701238dC8417dD'
+stagenet_backend.sn_contrib_factory_addr = '0x66d0D4f71267b3150DafF7bD486AC5E097E7E4C6'
 stagenet_backend.sn_rewards_addr         = '0x4abfFB7f922767f22c7aa6524823d93FDDaB54b1'
 stagenet_backend.sn_token_addr           = '0x70c1f36C9cEBCa51B9344121D284D85BE36CD6bB'
 stagenet_backend.provider_url            = 'https://sepolia-rollup.arbitrum.io/rpc'
