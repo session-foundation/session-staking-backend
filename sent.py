@@ -985,7 +985,7 @@ def parse_stake_info(
         'last_uptime_proof': stake.get('last_uptime_proof'),
         'liquidation_height': stake.get('liquidation_height'),
         'operator_address': stake.get('operator_address'),
-        'operator_fee': stake.get('portions_for_operator'),
+        'operator_fee': stake.get('operator_fee'),
         'pubkey_bls': stake.get('pubkey_bls'),
         'requested_unlock_height': stake.get('requested_unlock_height'),
         'service_node_pubkey': stake.get('service_node_pubkey'),
