@@ -3,6 +3,7 @@ from time import perf_counter
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import uuid
 
 import flask
 import string
@@ -294,6 +295,7 @@ def get_sns_future(omq, oxend) -> FutureJSON:
                     "swarm_id",
                     "is_removable",
                     "is_liquidatable",
+                    "operator_fee"
                 )
             },
         },
@@ -870,6 +872,10 @@ def get_rewards_dict_for_wallet(eth_wal):
     return result
 
 
+def generate_uuid(original_id):
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, original_id))
+
+
 class Contributor(TypedDict):
     address: bytes
     amount: int
@@ -889,6 +895,8 @@ class Stake(TypedDict):
     service_node_pubkey: bytes
     staked_balance: int | None
     state: str
+    # Only on multi-contributor contracts
+    contract: str | None
 
 class ErrorResponse:
     def __init__(self, message: str):
@@ -976,8 +984,23 @@ def parse_stake_info(
         if eth_format(contributor.get('address')) == wallet_address
     ) or None
 
+    # `stake-${stake.contract_id}-${stake.service_node_pubkey}-${stake.last_uptime_proof}`;
+    contract_id = stake.get('contract_id')
+    contract = stake.get('contract')
+    contract_formatted = eth_format(contract) if contract is not None else None
+    pubkey_bls = stake.get('pubkey_bls')
+
+    # TODO: Investigate the best data to use for id generation. these ids MUST be unique for each stake.
+    #
+    # A pubkey_bls can have multiple stakes over time, but a pubkey_bls and (contract_id or contract) can only have
+    #  one stake ever. The pubkey_bls needs to be used as its possible for a stake to not have a contract_id or
+    #  contract when it exits
+    unique_id = generate_uuid("{}-{}".format(pubkey_bls, contract_id if contract_formatted is None else contract_formatted))
+
     return {
-        'contract_id': stake.get('contract_id'),
+        'unique_id': unique_id,
+        'contract_id': contract_id,
+        'contract': contract_formatted,
         'contributors': contributors,
         'deregistration_unlock_height': deregistration_unlock_height,
         'earned_downtime_blocks': stake.get('earned_downtime_blocks'),
@@ -985,8 +1008,8 @@ def parse_stake_info(
         'last_uptime_proof': stake.get('last_uptime_proof'),
         'liquidation_height': stake.get('liquidation_height'),
         'operator_address': stake.get('operator_address'),
-        'operator_fee': stake.get('portions_for_operator'),
-        'pubkey_bls': stake.get('pubkey_bls'),
+        'operator_fee': stake.get('operator_fee'),
+        'pubkey_bls': pubkey_bls,
         'requested_unlock_height': stake.get('requested_unlock_height'),
         'service_node_pubkey': stake.get('service_node_pubkey'),
         'staked_balance': staked_balance,
@@ -1048,15 +1071,31 @@ def get_stakes(eth_wal: str):
         handle_stakes(app.wallet_to_historical_stakes_map, app.contract_id_to_historical_stakes_map, historical_stakes,
                       confirmed_exited=True)
 
-        contracts = []
-        for contract_address in app.contributors.get(wallet_address, []):
-            details = app.contracts[contract_address]
-            contracts.append({
-                'contract_address': contract_address,
-                'details': details
-            })
-            if not details["finalized"]:
-                stakes.append(parse_stake_info(details, wallet_address))
+        contracts = [
+            {
+                "contract": addr,
+                **details
+            }
+            for addr, details in get_contribution_contracts().items()
+            if details.get('contract_state') == 'awaiting_contributors' and details.get('operator') == wallet_address
+        ]
+
+        if len(app.bls_pubkey_to_contract_id_map) == 0:
+            app.logger.warning("{} bls_pubkey_to_contract_id_map is empty, fetching contract ids".format(date_now_str()))
+            update_service_node_contract_ids(None)
+
+
+        for contract in contracts:
+            pubkey_bls = contract.get('pubkey_bls')
+            if pubkey_bls is None:
+                app.logger.warning(f"pubkey_bls is None for contract: {contract}")
+                continue
+            contract_id = app.bls_pubkey_to_contract_id_map.get(pubkey_bls)
+            contract['contract_id'] = contract_id
+            contract['operator_fee'] = contract.get('fee')
+            contract['operator_address'] = contract.get('operator')
+
+            stakes.append(parse_stake_info(contract, wallet_address))
 
         return json_response({
             "contracts": contracts,
@@ -1112,7 +1151,7 @@ def get_nodes_for_wallet(oxen_wal=None, eth_wal=None):
             'last_uptime_proof':       sn_info["last_uptime_proof"],
             'contract_id':             sn_info["contract_id"],
             'operator_address':        sn_info["operator_address"],
-            'operator_fee':            sn_info["portions_for_operator"],
+            'operator_fee':            sn_info["operator_fee"],
             'requested_unlock_height': sn_info["requested_unlock_height"],
             'last_reward_block_height':sn_info["last_reward_block_height"],
             'service_node_pubkey':     sn_info["service_node_pubkey"],
