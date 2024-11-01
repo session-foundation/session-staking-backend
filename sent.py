@@ -765,7 +765,8 @@ def fetch_service_nodes(signum):
             sn_info['contract_id'] = contract_id
 
             for item in sn_info.get('contributors'):
-                item.pop('version')
+                if 'version' in item:
+                    item.pop('version')
 
             exit_type = entry.get('type')
             sn_info['exit_type'] = exit_type
