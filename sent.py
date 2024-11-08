@@ -681,7 +681,7 @@ def get_contribution_contracts():
     return app.contracts
 
 
-@timer(10)
+@timer(int(TARGET_BLOCK_TIME*3/4))
 def fetch_service_nodes(signum):
     app.logger.info("{} Update SN Start".format(date_now_str()))
     omq, oxend            = omq_connection()
