@@ -1,17 +1,12 @@
-from web3 import Web3
-from abi_manager import ABIManager
+from web3client.client import Web3Client
+from web3client.contracts.contract import ContractInterface
 
-class RewardRatePoolInterface:
-    def __init__(self, provider_url, contract_address):
-        """
-        Initialize the connection to the Ethereum provider and set up the contract.
-        :param provider_url: URL of the Ethereum node to connect to.
-        :param contract_address: Address of the RewardRatePool smart contract.
-        """
-        self.web3 = Web3(Web3.HTTPProvider(provider_url))
-        manager = ABIManager()
-        abi = manager.load_abi('RewardRatePool')
-        self.contract = self.web3.eth.contract(address=Web3.to_checksum_address(contract_address), abi=abi)
+
+class RewardRatePoolInterface(ContractInterface):
+    abi_name = "RewardRatePool"
+
+    def __init__(self, web3_client: Web3Client, contract_address: str):
+        super().__init__(web3_client, contract_address, RewardRatePoolInterface.abi_name)
 
     def calculate_total_deposited(self):
         """
@@ -40,14 +35,3 @@ class RewardRatePoolInterface:
         :param timestamp: The timestamp for which to calculate the reward rate.
         """
         return self.contract.functions.rewardRate(timestamp).call()
-
-# Example usage:
-# provider_url = 'http://127.0.0.1:8545'
-# contract_address = '0x...'
-
-# reward_rate_pool = RewardRatePoolInterface(provider_url, contract_address)
-# total_deposited = reward_rate_pool.calculate_total_deposited()
-# print("Total Deposited:", total_deposited)
-# reward_rate = reward_rate_pool.reward_rate(Web3.toInt(text="latest"))
-# print("Reward Rate at Latest:", reward_rate)
-

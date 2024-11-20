@@ -1,36 +1,16 @@
+import time
+from dataclasses import dataclass
+
 from web3 import Web3
-from abi_manager import ABIManager
+from web3client.client import Web3Client
+from web3client.contracts.contract import ContractInterface
 
-class ContributorContractInterface:
-    """ Parent class to handle Web3 connection and load ABI for contracts. """
 
-    def __init__(self, provider_url):
-        """
-        Initialize the connection to the Ethereum provider.
-        :param provider_url: URL of the Ethereum node to connect to.
-        """
-        self.web3 = Web3(Web3.HTTPProvider(provider_url))
-        manager = ABIManager()
-        self.abi = manager.load_abi('ServiceNodeContribution')
+class ServiceNodeContributionInterface(ContractInterface):
+    abi_name = "ServiceNodeContribution"
 
-    def get_contract_instance(self, contract_address):
-        """
-        Create an instance of a contract at a given address.
-        :param contract_address: Address of the contract to interact with.
-        :return: Web3 Contract object.
-        """
-        contract = self.web3.eth.contract(address=Web3.to_checksum_address(contract_address), abi=self.abi)
-        return ServiceNodeContribution(contract)
-
-class ServiceNodeContribution:
-    """ Child class to interact with specific Service Node Contribution contracts. """
-
-    def __init__(self, contract):
-        """
-        Initialize the contract interaction class with the contract.
-        :param contract: Web3 Contract object.
-        """
-        self.contract = contract
+    def __init__(self, web3_client: Web3Client, contract_address: str):
+        super().__init__(web3_client, contract_address, ServiceNodeContributionInterface.abi_name)
 
     def get_contributor_contribution(self, contributor_address):
         """
@@ -38,7 +18,9 @@ class ServiceNodeContribution:
         :param contributor_address: Address of the contributor.
         :return: Contribution amount of the specified contributor.
         """
-        return self.contract.functions.contributions(Web3.to_checksum_address(contributor_address)).call()
+        return self.contract.functions.contributions(
+            Web3.to_checksum_address(contributor_address)
+        ).call()
 
     def status(self):
         """
@@ -90,9 +72,9 @@ class ServiceNodeContribution:
         """
         params = self.contract.functions.serviceNodeParams().call()
         return {
-                'serviceNodePubkey': f"{params[0]:032x}",
-                'serviceNodeSignature': f"{params[1]:032x}{params[2]:032x}",
-                'fee': params[3]
+            "serviceNodePubkey": f"{params[0]:032x}",
+            "serviceNodeSignature": f"{params[1]:032x}{params[2]:032x}",
+            "fee": params[3],
         }
 
     def get_operator(self):
@@ -102,31 +84,30 @@ class ServiceNodeContribution:
         return self.contract.functions.operator().call()
 
     def get_contributions(self):
-        contributions = self.contract.functions.getContributions().call()
         # (address[] memory addrs, address[] memory beneficiaries, uint256[] memory contribs)
+        contributions = self.contract.functions.getContributions().call()
         addresses = contributions[0]
         beneficiaries = contributions[1]
         contributions = contributions[2]
 
         contributions_list = []
         for i in range(len(addresses)):
-            contributions_list.append({
-                "address": addresses[i],
-                "amount": contributions[i],
-                "beneficiary": beneficiaries[i]
-            })
+            contributions_list.append(
+                {
+                    "address": addresses[i],
+                    "amount": contributions[i],
+                    "beneficiary": beneficiaries[i],
+                }
+            )
         return contributions_list
 
+    @staticmethod
+    def add_details_fetch_to_batch_added_batches():
+        return 5
 
-# Example usage:
-# provider_url = 'http://127.0.0.1:8545'
-# contract_address = '0x...'
-
-# contract_interface = ContributorContractInterface(provider_url)
-# service_node = contract_interface.get_contract_instance(contract_address)
-
-# Fetch and display data from the contract
-# print("Total Contribution:", service_node.total_contribution())
-# print("Is Finalized:", service_node.is_finalized())
-# print("Is Cancelled:", service_node.is_cancelled())
-# print("Minimum Contribution Required:", service_node.minimum_contribution())
+    def add_details_fetch_to_batch(self, batch):
+        batch.add(self.contract.functions.serviceNodeParams())
+        batch.add(self.contract.functions.operator())
+        batch.add(self.contract.functions.blsPubkey())
+        batch.add(self.contract.functions.getContributions())
+        batch.add(self.contract.functions.status())

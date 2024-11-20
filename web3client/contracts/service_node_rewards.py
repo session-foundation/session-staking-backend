@@ -1,32 +1,41 @@
-from   web3        import Web3
-from   abi_manager import ABIManager
+from web3client.client import Web3Client
+from web3client.contracts.contract import ContractInterface
+from web3client.event_scanner import EventScanner
+
 
 class ServiceNodeRewardsRecipient:
     def __init__(self):
         self.rewards = 0
         self.claimed = 0
 
+
 class ServiceNodeRewardsMapEntry:
     def __init__(self):
-        self.value  = ServiceNodeRewardsRecipient()
-        self.height = 0;
+        self.value = ServiceNodeRewardsRecipient()
+        self.height = 0
 
-class ServiceNodeRewardsInterface:
-    def __init__(self, provider_url: str, contract_address: str):
-        """
-        Initialize the connection to the ServiceNodeContributionFactory contract.
 
-        :param provider_url: URL of the Ethereum node to connect to.
-        :param contract_address: Address of the deployed ServiceNodeContributionFactory contract.
-        """
-        self.web3             = Web3(Web3.HTTPProvider(provider_url))
-        self.contract_address = Web3.to_checksum_address(contract_address)
-        manager               = ABIManager()
-        abi                   = manager.load_abi('ServiceNodeRewards')
-        self.contract         = self.web3.eth.contract(address=self.contract_address, abi=abi)
-        self.address_map      = {}
+class ServiceNodeRewardsInterface(ContractInterface):
+    abi_name = "ServiceNodeRewards"
 
-    def allServiceNodeIDs(self):
+    def __init__(self, web3_client: Web3Client, contract_address: str, scanner_safety_blocks: int):
+        super().__init__(web3_client, contract_address, ServiceNodeRewardsInterface.abi_name)
+        self.event_scanner = EventScanner(
+            provider_url=web3_client.provider_url,
+            events=[
+                self.contract.events.NewServiceNodeV2,
+                self.contract.events.ServiceNodeExitRequest,
+                self.contract.events.ServiceNodeExit,
+                self.contract.events.ServiceNodeLiquidated,
+            ],
+            filters={"address": self.contract_address},
+            # How many maximum blocks at the time we request from JSON-RPC
+            # and we are unlikely to exceed the response size limit of the JSON-RPC server
+            max_chunk_scan_size=10_000_000,
+            safety_blocks=scanner_safety_blocks,
+        )
+
+    def get_all_service_node_contract_ids(self):
         """
         Calls the allServiceNodeIds function to get the `id` and `bls_key` lists
 
@@ -55,7 +64,7 @@ class ServiceNodeRewardsInterface:
 
         # Retrieve the recipient entry and check if enough time has elapsed to
         # update the entry, otherwise return the cached entry
-        entry  = self.address_map[eth_address]
+        entry = self.address_map[eth_address]
         result = entry.value
         if entry.height >= height:
             return result
@@ -63,24 +72,25 @@ class ServiceNodeRewardsInterface:
         # NOTE: Assuming a block time of 0.25s, we want a 30s block buffer.
         # TODO: This value is copied from oxen-core of the same name
         # `SAFE_BLOCKS`
-        SAFE_BLOCKS              = 30 / 0.25;
+        SAFE_BLOCKS = 30 / 0.25
         blocks_since_last_update = height - entry.height
         if blocks_since_last_update < SAFE_BLOCKS:
             return result
 
         # Enough blocks has elapsed, query the rewards from the contract
-        call_result    = self.contract.functions.recipients(eth_address).call(block_identifier=height)
+        call_result = self.contract.functions.recipients(eth_address).call(block_identifier=height)
         result.rewards = call_result[0]
         result.claimed = call_result[1]
 
-        assert result.claimed <= result.rewards, "Contract returned that wallet '{}' claimed {} more than the rewards {} allocated to it!".format(eth_address.decode('utf-8'),
-                                                                                                                                                  result.rewards,
-                                                                                                                                                  result.claimed)
-
+        assert (
+            result.claimed <= result.rewards
+        ), "Contract returned that wallet '{}' claimed {} more than the rewards {} allocated to it!".format(
+            eth_address.decode("utf-8"), result.rewards, result.claimed
+        )
 
         # Assign the updated entry back into the cache
-        entry.height                  = height
-        entry.value                   = result
+        entry.height = height
+        entry.value = result
         self.address_map[eth_address] = entry
 
         return result
