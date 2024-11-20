@@ -1,4 +1,4 @@
-/sent-backend.db*
+/*.db
 /config.py
 /__pycache__
 /oxend/*.sock
