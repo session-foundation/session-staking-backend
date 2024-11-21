@@ -14,6 +14,7 @@ class PerformanceLogger:
             self.check_for_orphans_interval = 3600  # 1 hour
             self.last_orphan_prune = 0
         else:
+            self.logger = None
             self.start = self._noop
             self.end = self._noop
 
