@@ -36,7 +36,7 @@ def validate_config(conf: config):
     """
 
     assert is_not_empty_string(conf.backend.sqlite_db), "sqlite_db is not set in config.py"
-    rpc_url = conf.backend.rpc_fetcher if conf.backend.rpc_fetcher else conf.backend.rpc
+    rpc_url = conf.backend.rpc_fetcher if conf.backend.rpc_fetcher else conf.backend.rpc_shared
     assert is_not_empty_string(rpc_url), "rpc url is not set in config.py requires rpc_fetcher or rpc"
     assert is_not_empty_string(
         conf.backend.oxen_wallet_regex
