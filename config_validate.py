@@ -68,9 +68,8 @@ def validate_config(conf: config):
     """
     Oxen RPC validations
     """
-    omq, oxend = omq_connection(conf.backend.rpc_fetcher)
-    rpc = OxenRPC(log, conf.backend.rpc_fetcher, conf.backend.rpc_fetcher_cache)
-    res = rpc.get_info(omq, oxend).get()
+    rpc = OxenRPC(log, rpc_url, 0)
+    res = rpc.get_info().get()
     log.debug("Config validation rpc response status: {}".format(res.get("status")))
     assert (
         res is not None and res.get("status") == "OK"
