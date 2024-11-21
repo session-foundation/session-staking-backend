@@ -173,8 +173,7 @@ class OxenRPC:
         )
 
     def get_network_info_from_network(self):
-        omq, oxend = omq_connection(self.rpc_url)
-        info = self.get_info(omq, oxend).get()
+        info = self.get_info().get()
         self.log.silly("get_network_info_from_network info: {}".format(info))
 
         return NetworkInfo(

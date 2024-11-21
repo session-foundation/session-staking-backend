@@ -21,7 +21,7 @@ class TimeKeeper:
         self.exec_cpu_durations = {}
 
         if perf:
-            self.perf = PerformanceLogger(enabled=True)
+            self.perf = PerformanceLogger(logger.perf, enabled=True)
 
     def add(self, name: str):
         self.exec_timestamps.setdefault(name, []).append(time.time())
