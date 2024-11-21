@@ -3,7 +3,7 @@ import logging
 from log.perf import PerformanceLogger
 from log.util import add_logging_level
 
-CUSTOM_LOG_LEVELS = {"SILLY": 1, "PERF": 69}
+CUSTOM_LOG_LEVELS = {"SILLY": 1, "PERFORMANCE": 69}
 for label, lvl in CUSTOM_LOG_LEVELS.items():
     add_logging_level(label, lvl)
 
@@ -48,7 +48,7 @@ class Log:
         ch.setFormatter(CustomFormatter())
         self.logger.addHandler(ch)
 
-        self.logger.perf = PerformanceLogger(self.logger.perf, enable_perf)
+        self.logger.perf = PerformanceLogger(self.logger, enable_perf)
 
     def set_level(self, level: str) -> None:
         named_level = logging.getLevelName(level)

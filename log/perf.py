@@ -1,9 +1,9 @@
-from logging import info
+import logging
 import time
 
 
 class PerformanceLogger:
-    def __init__(self, logger: info = None, enabled=True):
+    def __init__(self, logger: logging = None, enabled=True):
         if enabled:
             self.logger = logger
             self.start = self._start_enabled
@@ -43,11 +43,11 @@ class PerformanceLogger:
             return
 
         if elapsed_ms is not None and elapsed_cpu_ms is not None:
-            self.logger(
+            self.logger.performance(
                 f"Elapsed time for '{label}': {elapsed_ms:.6f} ms ({elapsed_cpu_ms:.6f} cpu ms)"
             )
         else:
-            self.logger(f"No start time recorded for label '{label}'")
+            self.logger.performance(f"No start time recorded for label '{label}'")
 
     def _cleanup_orphans(self):
         now = time.time()

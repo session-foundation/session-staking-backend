@@ -291,8 +291,7 @@ class App:
         contributions = []
 
         try:
-            omq, oxend = omq_connection(config.backend.rpc_fetcher)
-            res = self.rpc.get_service_nodes(omq, oxend).get()
+            res = self.rpc.get_service_nodes().get()
             current_height = res.get("height")
             self.log.debug("Fetched service node list at height {}".format(current_height))
 
