@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+import dataclasses
+import statistics
 import flask
 import time
-
 import eth_utils
 import subprocess
 
@@ -82,13 +83,28 @@ app.url_map.converters["hex64"] = Hex64Converter
 app.url_map.converters["eth_wallet"] = EthConverter
 
 
+def get_median_operator_fee():
+    # remove nodes that only have a single contributor
+    nodes = [n for n in get_nodes_cached() if len(n.contributors) > 1]
+    return statistics.median([n.operator_fee for n in nodes])
+
+
+def get_network_info_uncached():
+    network_info = app.db_reader.get_network_info()
+    if network_info is None:
+        return None
+    network_info = dataclasses.asdict(network_info)
+    network_info["median_operator_fee"] = get_median_operator_fee()
+    return network_info
+
+
 def json_response(vals):
     """
     Takes a dict, adds some general info fields to it, and jsonifies it for a flask route function
     return value.  The dict gets passed through `hexify` first to convert any bytes values to hex.
     """
     hexify(vals)
-    network = app.data.get("network_info", getter=app.db_reader.get_network_info)
+    network = app.data.get("network_info", getter=get_network_info_uncached)
     return flask.jsonify({**vals, "network": network, "t": time.time()})
 
 
@@ -103,7 +119,7 @@ def get_nodes_cached():
 
 @app.route("/nodes")
 def get_nodes():
-    return json_response({"nodes": app.data.get("nodes", getter=app.db_reader.get_nodes)})
+    return json_response({"nodes": get_nodes_cached()})
 
 
 """
