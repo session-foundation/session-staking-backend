@@ -134,7 +134,7 @@ def get_nodes():
 # TODO: might make sense to investigate storing contributor and operator addresses in the db as blobs and compare with bytes
 @app.route("/stakes/<eth_wallet:eth_wal>")
 @app.route("/nodes/<eth_wallet:eth_wal>")
-def get_stakes(eth_wal: str):
+def get_stakes_for_eth_address(eth_wal: str):
     try:
         if not eth_wal or not eth_utils.is_address(eth_wal):
             raise ValueError("Invalid wallet address")
@@ -155,6 +155,19 @@ def get_stakes(eth_wal: str):
     except ValueError as e:
         app.logger.error(f"Exception: {e}")
         return flask.abort(400, e)
+    except Exception as e:
+        app.logger.error(f"Exception: {e}")
+        return flask.abort(500, e)
+
+
+@app.route("/stakes/<hex64:sn_pubkey>")
+@app.route("/nodes/<hex64:sn_pubkey>")
+def get_stakes_for_sn_pubkey(sn_pubkey: bytes):
+    try:
+        nodes = get_nodes_cached()
+        related_nodes = [node for node in nodes if node.pubkey_ed25519 == sn_pubkey]
+        return json_response({"stakes": related_nodes})
+
     except Exception as e:
         app.logger.error(f"Exception: {e}")
         return flask.abort(500, e)
