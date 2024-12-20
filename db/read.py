@@ -1,7 +1,8 @@
 import sqlite3
 from contextlib import closing
 
-from db.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, DBContributionContractContribution, SmartContractABI
+from db.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
+    DBContributionContractContribution, SmartContractABI, ArbitrumEvent, ArbitrumInfo
 from log import Log
 
 
@@ -200,6 +201,22 @@ class DBReader:
                 self.log.perf.end("get_smart_contract_addresses")
                 return addresses
 
+    def get_smart_contract_addresses_core(self):
+        self.log.perf.start("get_smart_contract_addresses_core")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT address, name FROM smart_contracts WHERE name IN ('ServiceNodeRewards', 'ServiceNodeContributionFactory', 'ServiceNodeRewards')
+                    """
+                )
+                addresses = [
+                    {"address": address, "name": name} for address, name in cursor.fetchall()
+                ]
+                self.log.debug("Smart contract addresses: {}".format(len(addresses)))
+                self.log.perf.end("get_smart_contract_addresses_core")
+                return addresses
+
     def get_smart_contract_address(self, name: str):
         self.log.perf.start("get_smart_contract_address")
         with closing(sqlite3.connect(self.db_path)) as connection:
@@ -214,3 +231,37 @@ class DBReader:
                 self.log.debug("Smart contract address: {}".format(address))
                 self.log.perf.end("get_smart_contract_address")
                 return address[0]
+
+    def get_arbitrum_events(self, args=None):
+        if args is None:
+            args = [1000, 0]
+        self.log.perf.start("get_arbitrum_events")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                limit = args[0]
+                skip = args[1]
+                cursor.execute(
+                    """
+                    SELECT * FROM arbitrum_events ORDER BY block DESC LIMIT ? OFFSET ?
+                    """,
+                    (limit, skip),
+                )
+                events = [ArbitrumEvent(*event) for event in cursor.fetchall()]
+                self.log.debug("Arbitrum events: {}".format(len(events)))
+                self.log.perf.end("get_arbitrum_events")
+
+                cursor.execute("SELECT COUNT(*) FROM arbitrum_events")
+                total = cursor.fetchone()[0]
+
+                return events, limit, skip, total
+
+    def get_arbitrum_info(self):
+        self.log.perf.start("get_arbitrum_info")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute("SELECT * FROM arbitrum_info ORDER BY block DESC LIMIT 1")
+                info = ArbitrumInfo(*cursor.fetchone())
+
+                self.log.debug("Arbitrum info: {}".format(info))
+                self.log.perf.end("get_arbitrum_info")
+                return info

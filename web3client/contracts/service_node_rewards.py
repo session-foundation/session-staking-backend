@@ -27,6 +27,7 @@ class ServiceNodeRewardsInterface(ContractInterface):
                 self.contract.events.ServiceNodeExitRequest,
                 self.contract.events.ServiceNodeExit,
                 self.contract.events.ServiceNodeLiquidated,
+                self.contract.events.RewardsClaimed,
             ],
             filters={"address": self.contract_address},
             # How many maximum blocks at the time we request from JSON-RPC

@@ -385,7 +385,7 @@ class DBWriter:
                     (
                         (
                             event.block,
-                            event.tx,
+                            "0x" + event.tx,
                             event.name,
                             Web3.to_json(dict(event.args)),
                         )
@@ -452,6 +452,28 @@ class DBWriter:
                         inserted_contract_rows
                     )
                 )
+                self.log.perf.start("write_contribution_contracts_to_db -> delete contributions")
+
+                # The contributors for a contact need to be deleted before the contract can be inserted again to account
+                #   for contract resets, or contributors leaving the contract. We could read from the db and only delete
+                #   the missing ones but this should be more performant.
+                # TODO: investigate a better solution
+                cursor.executemany(
+                    """DELETE FROM contribution_contracts_contributions WHERE contract_address = ?""",
+                    ((
+                        contract.address,
+                    )
+                        for contract in contracts)
+                )
+
+                deleted_contributions_rows = cursor.rowcount
+
+                self.log.perf.end("write_contribution_contracts_to_db -> delete contributions")
+                self.log.debug(
+                    "Deleted {} rows from contribution_contracts_contributions".format(
+                        deleted_contributions_rows
+                    )
+                )
                 self.log.debug(
                     "Inserting {} contract contributions".format(len(contributions_list))
                 )
@@ -461,7 +483,7 @@ class DBWriter:
 
                 cursor.executemany(
                     """
-                    INSERT OR REPLACE INTO contribution_contracts_contributions (
+                    INSERT INTO contribution_contracts_contributions (
                         address,
                         amount,
                         beneficiary_address,
@@ -572,3 +594,25 @@ class DBWriter:
 
             connection.commit()
             self.log.perf.end("write_smart_contract_details_to_db")
+
+    def write_arbitrum_info_to_db(self, current_block, service_node_rewards_balance, reward_rate_pool_balance):
+        self.log.perf.start("write_arbitrum_info_to_db")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(
+                    "Inserting arbitrum info: current block {}, service node rewards balance {}, reward rate pool balance {}".format(
+                        current_block, service_node_rewards_balance, reward_rate_pool_balance))
+                self.log.perf.start("write_arbitrum_info_to_db -> insert info")
+                
+                cursor.execute("INSERT OR REPLACE INTO arbitrum_info (block, balance_service_node_rewards, balance_reward_rate_pool) VALUES (?, ?, ?)", (current_block, service_node_rewards_balance, reward_rate_pool_balance))
+
+                inserted_info_rows = cursor.rowcount
+
+                self.log.perf.end("write_arbitrum_info_to_db -> insert info")
+                self.log.debug(
+                    "Inserted {} rows into arbitrum_info".format(inserted_info_rows)
+                )
+
+            connection.commit()
+            self.log.perf.end("write_arbitrum_info_to_db")

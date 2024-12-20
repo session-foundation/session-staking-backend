@@ -208,6 +208,11 @@ def get_contract_addresses():
         {"addresses": app.data.get("addresses", getter=app.db_reader.get_smart_contract_addresses)}
     )
 
+@app.route("/contract/addresses/core")
+def get_contract_addresses_core():
+    return json_response(
+        {"addresses": app.data.get("addresses_core", getter=app.db_reader.get_smart_contract_addresses_core)}
+    )
 
 @app.route("/contract/contribution")
 def get_open_contract_details():
@@ -245,6 +250,31 @@ def get_contract_address(contract_name: str):
         }
     )
 
+
+
+
+"""
+//////////////////////////////////////////////////////////////
+//                                                          //
+//                    Event Endpoints                       //
+//                                                          //
+//////////////////////////////////////////////////////////////
+"""
+
+def get_events_handler(count_limit=500, skip=0):
+    limit = min(count_limit, 500)
+    events, limit, skip, total = app.data.get("events-{}-{}".format(count_limit,skip), getter=app.db_reader.get_arbitrum_events, getter_args=[limit, skip], ttl=10)
+    pagination = {"limit": limit, "skip": skip, "total": total}
+
+    return {"events": events, "pagination": pagination}
+
+@app.route("/events/<int:count>/<int:skip>")
+def get_events(count: int, skip: int):
+    return json_response(get_events_handler(count, skip))
+
+@app.route("/arbitrum-info")
+def get_arbitrum_info():
+    return json_response({"info": app.data.get("arbitrum-info", getter=app.db_reader.get_arbitrum_info)})
 
 """
 //////////////////////////////////////////////////////////////

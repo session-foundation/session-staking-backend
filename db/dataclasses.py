@@ -128,3 +128,20 @@ class SmartContractABI:
 
     def __post_init__(self):
         self.abi = json.loads(self.abi)
+
+@dataclass
+class ArbitrumEvent:
+    block: int
+    tx: str
+    name: str
+    args: str
+
+    def __post_init__(self):
+        self.args = json.loads(self.args)
+
+@dataclass
+class ArbitrumInfo:
+    block: int
+    timestamp: float
+    balance_reward_rate_pool: int
+    balance_service_node_rewards: int

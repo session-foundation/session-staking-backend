@@ -400,7 +400,13 @@ class App:
             self.log.info("Update arbitrum details task start")
 
             last_event_block_height = self.db_reader.get_last_fetched_arbitrum_event_block_height()
-            end_block = self.web3_client.web3.eth.block_number - 1
+            current_block = self.web3_client.web3.eth.block_number
+            end_block = current_block - 1
+
+            service_node_rewards_balance = self.token_contract.balance_of(self.service_node_rewards.contract_address)
+            reward_rate_pool_balance = self.token_contract.balance_of(self.reward_rate_pool.contract_address)
+            self.log.debug("Arbitrum info: service node rewards balance {}, reward rate pool balance {}".format(service_node_rewards_balance, reward_rate_pool_balance))
+            self.db_writer.write_arbitrum_info_to_db(current_block, service_node_rewards_balance, reward_rate_pool_balance)
 
             new_contribution_contracts, new_contribution_events = get_new_contribution_contracts(
                 self.web3_client,
@@ -435,6 +441,7 @@ class App:
             service_node_rewards_events.extend(new_contribution_events)
 
             self.db_writer.write_arbitrum_events_to_db(service_node_rewards_events)
+
 
             self.arbitrum_details_last_updated = time.time()
             self.log.perf.end("update_arbitrum_details")
