@@ -139,6 +139,20 @@ CREATE TABLE network_info (
 
 CREATE INDEX network_info_block_height_idx ON network_info(block_height DESC);
 
+CREATE TABLE rewards_info (
+    address BLOB NOT NULL PRIMARY KEY,
+    rewards INTEGER NOT NULL
+);
+
+CREATE TABLE arbitrum_info (
+    block INTEGER PRIMARY KEY NOT NULL,
+    timestamp FLOAT NOT NULL DEFAULT ((julianday('now') - 2440587.5)*86400.0), /* unix epoch */
+    balance_reward_rate_pool INTEGER NOT NULL,
+    balance_service_node_rewards INTEGER NOT NULL
+);
+
+CREATE INDEX arbitrum_info_block_idx ON arbitrum_info(block DESC);
+
 CREATE TABLE arbitrum_events (
     block INTEGER NOT NULL,
     tx TEXT NOT NULL,
@@ -193,21 +207,3 @@ CREATE TABLE smart_contracts (
 
     foreign key (name) references smart_contract_abis(name)
 );
-
--- TODO: check if this can be better, just ported over from the old db
-CREATE TABLE IF NOT EXISTS registrations (
-    contract BLOB,
-    operator BLOB NOT NULL,
-    pubkey_bls BLOB NOT NULL,
-    pubkey_ed25519 BLOB NOT NULL,
-    sig_bls BLOB NOT NULL,
-    sig_ed25519 BLOB NOT NULL,
-    timestamp FLOAT NOT NULL DEFAULT ((julianday('now') - 2440587.5)*86400.0), /* unix epoch */
-
-    CHECK(length(pubkey_ed25519) == 32),
-    CHECK(length(pubkey_bls) == 64),
-    CHECK(length(sig_ed25519) == 64),
-    CHECK(length(sig_bls) == 128),
-    CHECK(length(operator) == 20),
-    CHECK(contract IS NULL OR length(contract) == 20)
-)
