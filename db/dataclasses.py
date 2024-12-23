@@ -150,3 +150,13 @@ class ArbitrumInfo:
 class RewardsInfo:
     address: str
     rewards: int
+
+@dataclass
+class Registration:
+    contract: bytes
+    operator: bytes
+    pubkey_bls: bytes
+    pubkey_ed25519: bytes
+    sig_bls: bytes
+    sig_ed25519: bytes
+    timestamp: float

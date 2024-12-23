@@ -20,7 +20,7 @@ from db.read import DBReader
 from db.write import DBWriter
 from log import Log
 from oxen.rpc import ServiceNode, OxenRPC, NetworkInfo
-from util import format_seconds
+from util import format_seconds, is_not_empty_string
 from log.time_keeper import TimeKeeper
 from web3client.abi_manager import ABIManager
 from web3client.client import Web3Client

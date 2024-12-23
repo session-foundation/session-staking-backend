@@ -98,65 +98,6 @@ def get_network_info():
 //////////////////////////////////////////////////////////////
 """
 
-
-@app.route("/registrations/<eth_wallet:operator>")
-def operator_registrations(operator: str):
-    """
-    Retrieves stored registration(s) for the given 'operator'.
-
-    This returns an array in the "registrations" field containing as many registrations as are
-    currently stored for the given operator wallet, sorted from most to least recently submitted.
-
-    Fields are the same as the version of this endpoint that takes a SN pubkey.
-
-    Returns the JSON response with the 'registrations' for the given 'operator'.
-    """
-
-    operator_bytes = bytes.fromhex(operator[2:])
-
-    return json_response(
-        {
-            "registrations": app.data.get(
-                f"op-{operator_bytes}",
-                getter=app.db_reader.get_registrations_for_operator,
-                getter_args=operator_bytes,
-            )
-        }
-    )
-
-
-@app.route("/registrations/<hex64:sn_pubkey>")
-def sn_pubkey_registrations(sn_pubkey: bytes) -> flask.Response:
-    """
-    Retrieves stored registration(s) for the given service node pubkey.
-
-    This returns an array in the "registrations" field containing either one or two registration
-    info dicts: a solo registration (if known) and a multi-contributor contract registration (if
-    known).  These are sorted by timestamp of when the registration was last received/updated.
-
-    Fields in each dict:
-    - "operator": the operator address.
-    - "contract": the contract address, for "type": "contract" and omitted for "type": "solo".
-    - "pubkey_ed25519": the primary SN pubkey, in hex.
-    - "pubkey_bls": the SN BLS pubkey, in hex.
-    - "sig_ed25519": the SN pubkey signed registration signature.
-    - "sig_bls": the SN BLS pubkey signed registration signature.
-    - "timestamp": the unix timestamp when this registration was received (or last updated)
-
-    Returns the JSON response with the 'registrations' for the given 'sn_pubkey'.
-    """
-    result = json_response(
-        {
-            "registrations": app.data.get(
-                f"sn-{sn_pubkey}",
-                getter=app.db_reader.get_registrations_by_pubkey,
-                getter_args=sn_pubkey,
-            )
-        }
-    )
-    return result
-
-
 @app.route("/registrations/<hex64:sn_pubkey>", methods=["POST"])
 @app.route("/store/<hex64:sn_pubkey>", methods=["GET", "POST"])
 def store_registration(sn_pubkey: bytes):
