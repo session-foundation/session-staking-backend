@@ -2,7 +2,7 @@ import sqlite3
 from contextlib import closing
 
 from db.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
-    DBContributionContractContribution, SmartContractABI, ArbitrumEvent, ArbitrumInfo
+    DBContributionContractContribution, SmartContractABI, ArbitrumEvent, ArbitrumInfo, RewardsInfo
 from log import Log
 
 
@@ -141,6 +141,19 @@ class DBReader:
                 self.log.debug("Parsed nodes: {}".format(len(parsed_nodes)))
                 self.log.perf.end("get_nodes")
                 return list(parsed_nodes.values())
+
+    def get_rewards_info(self):
+        self.log.perf.start("get_rewards_info")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute("SELECT * FROM rewards_info")
+                rewards_info = {
+                    address: rewards
+                    for address, rewards in cursor.fetchall()
+                }
+                self.log.debug("Rewards info: {}".format(len(rewards_info)))
+                self.log.perf.end("get_rewards_info")
+                return rewards_info
 
     def get_smart_contract_abis(self):
         self.log.perf.start("get_smart_contract_abis")

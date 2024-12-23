@@ -6,6 +6,7 @@ from contextlib import closing
 from web3 import Web3
 
 from arbitrum import ContributionContractDetails
+from db.dataclasses import RewardsInfo
 from log import Log
 from oxen.rpc import ServiceNode, NetworkInfo
 from web3client.abi_manager import ABIData
@@ -361,6 +362,38 @@ class DBWriter:
                 )
                 connection.commit()
         self.log.perf.end("write_network_info_to_db")
+
+    def write_rewards_info_to_db(self, rewards_info: list[RewardsInfo]):
+        self.log.perf.start("write_rewards_info_to_db")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug("Inserting {} rewards info".format(len(rewards_info)))
+                self.log.perf.start("write_rewards_info_to_db -> insert rewards info")
+
+                cursor.executemany(
+                    """
+                    INSERT OR REPLACE INTO rewards_info (address, rewards)
+                    VALUES (?, ?)
+                    """,
+                    (
+                        (
+                            info.address,
+                            info.rewards,
+                        )
+                        for info in rewards_info
+                    ),
+                )
+
+                inserted_rewards_rows = cursor.rowcount
+
+                self.log.perf.end("write_rewards_info_to_db -> insert rewards info")
+                self.log.debug(
+                    "Inserted {} rows into rewards_info".format(inserted_rewards_rows)
+                )
+
+            connection.commit()
+            self.log.perf.end("write_rewards_info_to_db")
 
     def write_arbitrum_events_to_db(self, events: list[ProcessedEvent]):
         self.log.perf.start("write_arbitrum_events_to_db")

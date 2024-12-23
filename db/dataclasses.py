@@ -145,3 +145,8 @@ class ArbitrumInfo:
     timestamp: float
     balance_reward_rate_pool: int
     balance_service_node_rewards: int
+
+@dataclass
+class RewardsInfo:
+    address: str
+    rewards: int

@@ -14,15 +14,7 @@ from db.read import DBReader
 from log import Log
 from oxen.rpc import OxenRPC
 from util.data import DataManager
-from util.parse import eth_regex, Hex64Converter, hexify, EthConverter
-
-
-class WalletInfo:
-    def __init__(self):
-        self.rewards = 0  # Atomic SENT
-        self.contract_rewards = 0
-        self.contract_claimed = 0
-
+from util.parse import Hex64Converter, hexify, EthConverter
 
 class App(flask.Flask):
     def __init__(self, name):
@@ -325,27 +317,31 @@ def get_exit_liquidation_list():
 //////////////////////////////////////////////////////////////
 """
 
+def get_rewards_signature_uncached(eth_wal: str):
+    if not eth_wal or not eth_utils.is_address(eth_wal):
+        raise ValueError("Invalid wallet address")
+    response = app.rpc.bls_rewards_request(eth_utils.to_checksum_address(eth_wal)).get()
+    if response is None:
+        raise TimeoutError("Failed to get rewards signature")
+    return response
 
 @app.route("/rewards/<eth_wallet:eth_wal>", methods=["GET", "POST"])
 def get_rewards(eth_wal: str):
     if flask.request.method == "GET":
-        # TODO: implement db_reader.get_rewards_for_wallet and add rewards to main.py and main database
-        # return json_response(
-        #     {"result": app.data.get(f"rewards-{eth_wal}", getter=app.db_reader.get_rewards_for_wallet, getter_args=eth_wal)}
-        # )
-        return json_response({})
+        # We cache all rewards info for all wallets so we don't need to multiple reads in a short period of time
+        rewards_info = app.data.get(f"rewards_info", getter=app.db_reader.get_rewards_info)
+        return json_response({"rewards": rewards_info.get(eth_wal, 0)})
 
     if flask.request.method == "POST":
         try:
-            response = app.rpc.bls_rewards_request(eth_utils.to_checksum_address(eth_wal)).get()
-            if response is None:
-                return flask.abort(504)  # Gateway timeout
+            response = app.data.get(f"rewards-sig-{eth_wal}", getter=get_rewards_signature_uncached, getter_args=eth_wal)
             if "status" in response:
                 response.pop("status")
             if "address" in response:
                 response.pop("address")
-            result = json_response({"result": response})
-            return result
+            return json_response({"rewards": response})
+        except ValueError as e:
+            return flask.abort(400, str(e))
         except TimeoutError:
             return flask.abort(408)  # Request timeout
 

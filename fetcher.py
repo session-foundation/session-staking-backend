@@ -10,6 +10,7 @@ from arbitrum import (
     update_contribution_contract_details,
 )
 from config_validate import validate_config
+from db.dataclasses import RewardsInfo
 from db.util import (
     assert_all_dict_values_are_within_sqlite_integer_range,
     is_db_initialized,
@@ -281,6 +282,10 @@ class App:
         )
 
         self.db_writer.write_network_info_to_db(network)
+
+        rewards_info = self.get_rewards_info()
+        self.db_writer.write_rewards_info_to_db(rewards_info)
+
         self.log.info("Scheduled task finish")
         self.log.perf.end("scheduled_task")
 
@@ -393,6 +398,37 @@ class App:
         finally:
             self.log.perf.end("update_service_node_list")
             return parsed_nodes, contributions, current_height
+
+    def get_rewards_info(self):
+        self.log.perf.start("update_rewards_details")
+        self.log.debug("Update rewards details task start")
+        rewards_info = []
+        try:
+            # Get the accrued rewards values for each wallet
+            accrued_rewards_json = self.rpc.get_accrued_rewards().get()
+
+            assert accrued_rewards_json is not None, "Accrued rewards request failed"
+            assert accrued_rewards_json["status"] == "OK", "Accrued rewards request failed {}".format(accrued_rewards_json)
+            assert "balances" in accrued_rewards_json, "Accrued rewards request failed, 'balances' key was missing: {}".format(accrued_rewards_json)
+
+
+            # Populate (Binary ETH wallet address -> accrued_rewards) table
+            for address_hex, rewards in accrued_rewards_json.get("balances").items():
+                # Ignore non-ethereum addresses (e.g. left oxen rewards, not relevant)
+                trimmed_address_hex = address_hex[2:] if address_hex.startswith("0x") else address_hex
+                if len(trimmed_address_hex) != 40:
+                    self.log.warning("Invalid address {}".format(trimmed_address_hex))
+                    continue
+
+                rewards_info.append(RewardsInfo(address_hex, rewards))
+
+        except Exception as e:
+            self.log.error("Error fetching and parsing rewards details")
+            self.log.exception(e)
+        finally:
+            self.log.perf.end("update_rewards_details")
+            return rewards_info
+
 
     def update_arbitrum_details(self):
         try:
