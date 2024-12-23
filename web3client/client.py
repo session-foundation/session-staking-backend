@@ -1,7 +1,7 @@
 import logging
 
 import eth_utils
-from web3 import Web3
+from web3 import Web3, HTTPProvider
 from web3.contract.contract import ContractFunction
 from web3client.abi_manager import ABIManager
 
@@ -9,7 +9,7 @@ from web3client.abi_manager import ABIManager
 class Web3Client:
     def __init__(
         self,
-        provider_url: str,
+        provider_urls: list[str],
         caller_address: str | None,
         private_key: str | None,
         logger: logging,
@@ -18,17 +18,14 @@ class Web3Client:
         """
         Initialize the web3 client.
 
-        :param provider_url: URL of the Ethereum node to connect to.
+        :param provider_urls: List of URLs for Ethereum nodes to connect to.
         :param caller_address: Address of the caller.
         :param private_key: Private key of the caller.
         """
-        self.web3 = Web3(Web3.HTTPProvider(provider_url))
+        self.web3 = Web3(HTTPProvider(endpoint_uri=provider_urls[0]))
+        self.provider_url = provider_urls[0]
         self.abi_manager = abi_manager
         self.chain_id = self.web3.eth.chain_id
-
-        if provider_url is None:
-            raise ValueError("Provider URL is None")
-        self.provider_url = provider_url
 
         self.private_key = private_key
         if private_key is None:

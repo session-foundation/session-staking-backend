@@ -5,6 +5,7 @@ from log import Log
 from oxen.omq import omq_connection
 from oxen.rpc import OxenRPC
 from util import is_not_empty_string, valid_address_assertion
+from web3client.client import Web3Client
 
 
 def validate_config(conf: config):
@@ -48,22 +49,26 @@ def validate_config(conf: config):
     valid_address_assertion(conf.backend.addr_sn_rewards, "addr_sn_rewards")
     valid_address_assertion(conf.backend.addr_reward_rate_pool, "addr_reward_rate_pool")
 
-    assert is_not_empty_string(
-        conf.backend.web3_provider_url
-    ), "web3_provider_url is not set in config.py"
+    assert conf.backend.web3_provider_urls is not None and len(
+        conf.backend.web3_provider_urls
+    ) > 0, "web3_provider_urls is not set in config.py"
+
+    for web3_provider_url in conf.backend.web3_provider_urls:
+        assert is_not_empty_string(web3_provider_url), "web3_provider_urls is not set properly in config.py"
 
     """
     Web3 client validations
     """
-    # web3_client = Web3Client(
-    #     conf.backend.web3_provider_url,
-    #     conf.backend.web3_caller_address,
-    #     conf.backend.web3_private_key,
-    #     log,
-    # )
-    # block_number = web3_client.web3.eth.block_number
-    # log.debug("Config validation block number: {}".format(block_number))
-    # assert block_number is not None, "Failed to get block number from web3 provider"
+    web3_client = Web3Client(
+        conf.backend.web3_provider_urls,
+        conf.backend.web3_caller_address,
+        conf.backend.web3_private_key,
+        log,
+    )
+
+    block_number = web3_client.web3.eth.block_number
+    log.debug("Config validation block number: {}".format(block_number))
+    assert block_number is not None, "Failed to get block number from web3 provider"
 
     """
     Oxen RPC validations

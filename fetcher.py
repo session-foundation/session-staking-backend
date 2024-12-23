@@ -94,7 +94,7 @@ class App:
         self.arbitrum_details_last_updated = 0
 
         self.web3_client = Web3Client(
-            provider_url=config.backend.web3_provider_url,
+            provider_urls=config.backend.web3_provider_urls,
             caller_address=config.backend.web3_caller_address,
             private_key=config.backend.web3_private_key,
             logger=self.log,

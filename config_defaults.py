@@ -25,7 +25,7 @@ class Backend:
     oxen_wallet_regex:              str = ""
     sqlite_db:                      str = "sent-backend.db"
     sqlite_schema:                  str = "db/schema.sql"
-    rpc_shared:                     str = ""
+    rpc_shared:               list[str] = ""
     rpc_shared_cache:               int = 2
 
     """
@@ -35,9 +35,11 @@ class Backend:
     rpc_api:                        str = ""
     rpc_api_cache:                  int = 2
     """
-    REGISTRATION API CONFIG
+    REGISTRATION CONFIG
     """
     registration_api_name:          str = "registration_api"
+    # NOTE: This can be the same DB as the main API, but you must manually run the registrations/schema.sql script in
+    #   the main db so it can be populated with the required tables.
     registration_sqlite_db:         str = "sent-backend-registrations.db"
     registration_sqlite_schema:     str = "registration/schema.sql"
 
@@ -63,7 +65,7 @@ class Backend:
     thread_pool_max_workers:       int = 50
     web3_caller_address:    str | None = None
     web3_private_key:       str | None = None
-    web3_provider_url:      str = "http://localhost:8545"  # Default hardhat private chain node address)
+    web3_provider_urls:      list[str] = ["http://localhost:8545"]  # Default hardhat private chain node address)
 
 
 # Session mainnet contracts
@@ -87,18 +89,18 @@ devnet_backend.addr_sn_rewards          = "0x75Dc11700b2D03902FCb5Ca7aFd6A859a1F
 devnet_backend.oxen_wallet_regex        = f"dV[{B58_ALPHABET}]{{95}}"
 devnet_backend.rpc_shared               = "ipc://oxend/devnet.sock"
 devnet_backend.sqlite_db                = "ssb-devnet.db"
-devnet_backend.web3_provider_url        = "https://sepolia-rollup.arbitrum.io/rpc"
+devnet_backend.web3_provider_urls        = ["https://sepolia-rollup.arbitrum.io/rpc"]
 
 # Session stagenet.v3 contracts
 stagenet_backend = Backend()
 stagenet_backend.addr_reward_rate_pool = "0x38cD8D3F93d591C18cf26B3Be4CB2c872aC37953"
-stagenet_backend.addr_sn_contrib       = "0x70c1f36C9cEBCa51B9344121D284D85BE36CD6bB"
+stagenet_backend.addr_sent             = "0x70c1f36C9cEBCa51B9344121D284D85BE36CD6bB"
 stagenet_backend.addr_sn_contrib_factory = "0x66d0D4f71267b3150DafF7bD486AC5E097E7E4C6"
 stagenet_backend.addr_sn_rewards       = "0x4abfFB7f922767f22c7aa6524823d93FDDaB54b1"
 stagenet_backend.oxen_wallet_regex     = f"ST[{B58_ALPHABET}]{{95}}"
 stagenet_backend.rpc_shared            = "tcp://localhost:6786"
 stagenet_backend.sqlite_db             = "ssb-stagenet.db"
-stagenet_backend.web3_provider_url     = "http://10.24.0.1/arb_sepolia"
+stagenet_backend.web3_provider_urls     = ["http://10.24.0.2/arb_sepolia"]
 
 # Assign the active backend to be used in the sent-staking-backend
 backend = stagenet_backend
