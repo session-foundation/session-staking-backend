@@ -123,6 +123,7 @@ CREATE INDEX service_nodes_contributions_main_fetched_block_height_desc_idx ON s
 
 CREATE TABLE network_info (
     id INTEGER PRIMARY KEY NOT NULL,
+    active_node_count INTEGER NOT NULL,
     block_hash TEXT NOT NULL,
     block_height INTEGER NOT NULL,
     block_timestamp FLOAT NOT NULL,
@@ -132,6 +133,7 @@ CREATE TABLE network_info (
     max_stakers INTEGER NOT NULL,
     min_operator_contribution INTEGER NOT NULL,
     nettype TEXT NOT NULL,
+    node_count INTEGER NOT NULL,
     pulse_target_timestamp INTEGER NOT NULL,
     staking_requirement INTEGER NOT NULL,
     version TEXT NOT NULL

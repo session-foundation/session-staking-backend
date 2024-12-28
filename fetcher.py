@@ -7,7 +7,7 @@ import config
 from arbitrum import (
     get_service_node_rewards_contract_id_map,
     get_new_contribution_contracts,
-    update_contribution_contract_details,
+    update_contribution_contract_details, batch_populate_events_with_block_timestamps, populate_events_with_main_arg,
 )
 from config_validate import validate_config
 from db.dataclasses import RewardsInfo
@@ -275,13 +275,13 @@ class App:
     ):
         self.log.perf.start("update_service_node_list")
         self.log.info("Update service node list task start")
-        parsed_nodes, contributor_stake_map, current_height = self.fetch_service_node_list()
+        parsed_nodes, contributor_stake_map, current_height, node_count, active_node_count = self.fetch_service_node_list()
 
         self.db_writer.write_nodes_to_staging_db(
             current_height, parsed_nodes, contributor_stake_map
         )
 
-        self.db_writer.write_network_info_to_db(network)
+        self.db_writer.write_network_info_to_db(network=network, node_count=node_count, active_node_count=active_node_count)
 
         rewards_info = self.get_rewards_info()
         self.db_writer.write_rewards_info_to_db(rewards_info)
@@ -294,6 +294,7 @@ class App:
         current_height = None
         parsed_nodes = []
         contributions = []
+        active_node_count = 0
 
         try:
             res = self.rpc.get_service_nodes().get()
@@ -312,6 +313,10 @@ class App:
                     # TODO: remove once contract_id is available via rpc.get_service_nodes vv
                     pubkey_bls = node.get("pubkey_bls")
                     contract_id = contract_id_map.get(pubkey_bls)
+
+                    if node.get("active"):
+                        active_node_count += 1
+
                     if contract_id is None:
                         self.log.warning(
                             "Contract ID not found for node with BLS pubkey: {}".format(pubkey_bls)

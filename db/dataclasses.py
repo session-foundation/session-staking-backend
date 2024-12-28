@@ -74,6 +74,7 @@ class DBContributionMain:
 @dataclass
 class DBNetworkInfo:
     id: Optional[int]
+    active_node_count: int
     block_hash: str
     block_height: int
     block_timestamp: float
@@ -83,6 +84,7 @@ class DBNetworkInfo:
     max_stakers: int
     min_operator_contribution: int
     nettype: str
+    node_count: int
     pulse_target_timestamp: int
     staking_requirement: int
     version: str

@@ -321,6 +321,8 @@ class DBWriter:
     def write_network_info_to_db(
         self,
         network: NetworkInfo,
+        node_count: int,
+        active_node_count: int,
     ):
         self.log.perf.start("write_network_info_to_db")
         with closing(sqlite3.connect(self.db_path)) as connection:
@@ -329,6 +331,7 @@ class DBWriter:
                     """
                     INSERT OR REPLACE INTO network_info (
                         id,
+                        active_node_count,
                         block_hash,
                         block_height,
                         block_timestamp,
@@ -337,15 +340,17 @@ class DBWriter:
                         immutable_block_height,
                         max_stakers,
                         min_operator_contribution,
+                        node_count,
                         nettype,
                         pulse_target_timestamp,
                         staking_requirement,
                         version
                         )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         1,
+                        active_node_count,
                         network.block_hash,
                         network.block_height,
                         time.time().__floor__(),
@@ -354,6 +359,7 @@ class DBWriter:
                         network.immutable_block_height,
                         network.max_stakers,
                         network.min_operator_contribution,
+                        node_count,
                         network.nettype,
                         network.pulse_target_timestamp,
                         network.staking_requirement,
