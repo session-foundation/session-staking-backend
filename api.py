@@ -116,6 +116,12 @@ def get_nodes_cached():
 def get_nodes():
     return json_response({"nodes": get_nodes_cached()})
 
+def get_nodes_bls_keys_uncached():
+    return [node.pubkey_bls for node in get_nodes_cached()]
+
+@app.route("/nodes/bls")
+def get_nodes_bls_keys():
+    return json_response({"bls_keys": app.data.get("nodes_bls_keys", getter=get_nodes_bls_keys_uncached)})
 
 """
 //////////////////////////////////////////////////////////////
@@ -125,6 +131,22 @@ def get_nodes():
 //////////////////////////////////////////////////////////////
 """
 
+def get_related_stakes_for_eth_address_uncached(eth_wal: str):
+    nodes = get_nodes_cached()
+
+    related_nodes = []
+    for node in nodes:
+        if node.operator_address == eth_wal:
+            related_nodes.append(node)
+        elif node.contributors is not None:
+            for contributor in node.contributors:
+                if contributor.address == eth_wal:
+                    related_nodes.append(node)
+
+    return related_nodes
+
+def get_related_stakes_for_eth_address_cached(eth_wal: str):
+    return app.data.get("related-stakes-{}".format(eth_wal), getter=get_related_stakes_for_eth_address_uncached, getter_args=eth_wal)
 
 # TODO: might make sense to investigate storing contributor and operator addresses in the db as blobs and compare with bytes
 @app.route("/stakes/<eth_wallet:eth_wal>")
@@ -134,24 +156,14 @@ def get_stakes_for_eth_address(eth_wal: str):
         if not eth_wal or not eth_utils.is_address(eth_wal):
             raise ValueError("Invalid wallet address")
 
-        nodes = get_nodes_cached()
-
-        related_nodes = []
-        for node in nodes:
-            if node.operator_address == eth_wal:
-                related_nodes.append(node)
-            elif node.contributors is not None:
-                for contributor in node.contributors:
-                    if contributor.address == eth_wal:
-                        related_nodes.append(node)
-
-        return json_response({"stakes": related_nodes})
+        return json_response({"stakes": get_related_stakes_for_eth_address_cached(eth_wal), "contracts": get_related_contribution_contracts_for_eth_address_cached(eth_wal)})
 
     except ValueError as e:
         app.logger.error(f"Exception: {e}")
         return flask.abort(400, e)
     except Exception as e:
         app.logger.error(f"Exception: {e}")
+        app.logger.exception(e)
         return flask.abort(500, e)
 
 
@@ -209,11 +221,45 @@ def get_contract_addresses_core():
         {"addresses": app.data.get("addresses_core", getter=app.db_reader.get_smart_contract_addresses_core)}
     )
 
+def get_contribution_contracts_cached():
+    return app.data.get("contracts", getter=app.db_reader.get_contribution_contracts)
+
 @app.route("/contract/contribution")
 def get_open_contract_details():
     return json_response(
-        {"contracts": app.data.get("contracts", getter=app.db_reader.get_contribution_contracts)}
+        {"contracts": get_contribution_contracts_cached()}
     )
+
+def get_related_contribution_contracts_for_eth_address_uncached(eth_wal: str):
+    contracts = get_contribution_contracts_cached()
+
+    related_contracts = []
+    for contract in contracts:
+        if contract.operator_address == eth_wal:
+            related_contracts.append(contract)
+        elif contract.contributors is not None:
+            for contributor in contract.contributors:
+                if contributor.address == eth_wal:
+                    related_contracts.append(contract)
+    return related_contracts
+
+def get_related_contribution_contracts_for_eth_address_cached(eth_wal: str):
+    return app.data.get("related-contracts-{}".format(eth_wal), getter=get_related_contribution_contracts_for_eth_address_uncached, getter_args=eth_wal)
+
+@app.route("/contract/contribution/<eth_wallet:eth_wal>")
+def get_contribution_contracts_for_wallet(eth_wal: str):
+    try:
+        if not eth_wal or not eth_utils.is_address(eth_wal):
+            raise ValueError("Invalid wallet address")
+
+        return json_response({"contracts": get_related_contribution_contracts_for_eth_address_cached(eth_wal)})
+
+    except ValueError as e:
+        app.logger.error(f"Exception: {e}")
+        return flask.abort(400, e)
+    except Exception as e:
+        app.logger.error(f"Exception: {e}")
+        return flask.abort(500, e)
 
 
 @app.route("/contract/abi/<contract_name>")
