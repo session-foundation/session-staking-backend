@@ -53,9 +53,9 @@ class EventScanner:
         provider_url: str,
         events: List,
         filters: Dict[str, Any],
-        max_chunk_scan_size: int = 10000,
-        max_request_retries: int = 10,
-        request_retry_seconds: float = 2.0,
+        max_chunk_scan_size: int = 10_000,
+        max_request_retries: int = 5,
+        request_retry_seconds: float = 5,
         safety_blocks: int = 10,
     ):
         """
@@ -77,7 +77,7 @@ class EventScanner:
 
         # Our JSON-RPC throttling parameters
         # self.min_scan_chunk_size = 10  # 12 s/block = 120 seconds period
-        self.min_scan_chunk_size = 10000  # 12 s/block = 120 seconds period
+        self.min_scan_chunk_size = 10  # 12 s/block = 120 seconds period
         self.max_scan_chunk_size = max_chunk_scan_size
         self.max_request_retries = max_request_retries
         self.request_retry_seconds = request_retry_seconds
@@ -158,12 +158,7 @@ class EventScanner:
         When any transfers are encountered, we are back to scanning only a few blocks at a time.
         It does not make sense to do a full chain scan starting from block 1, doing one JSON-RPC call per 20 blocks.
         """
-
-        if event_found_count > 0:
-            # When we encounter first events, reset the chunk size window
-            current_chuck_size = self.min_scan_chunk_size
-        else:
-            current_chuck_size *= self.chunk_size_increase
+        current_chuck_size *= self.chunk_size_increase
 
         current_chuck_size = max(self.min_scan_chunk_size, current_chuck_size)
         current_chuck_size = min(self.max_scan_chunk_size, current_chuck_size)
