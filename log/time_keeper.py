@@ -7,7 +7,7 @@ from util import format_seconds, format_ms
 
 
 class TimeKeeper:
-    def __init__(self, logger: logging, perf=False, max_events=10_000):
+    def __init__(self, logger: logging, max_events=10_000):
         self.max_events = max_events
         assert self.max_events > 100, "max_events must be greater than 100 to be meaningful"
         assert self.max_events < 10e6, "max_events must be less than 10e6 to avoid memory issues"
@@ -20,7 +20,7 @@ class TimeKeeper:
         self.exec_durations = {}
         self.exec_cpu_durations = {}
 
-        self.perf = PerformanceLogger(logger, enabled=perf)
+        self.perf = PerformanceLogger(logger, enabled=True)
 
     def add(self, name: str):
         self.exec_timestamps.setdefault(name, []).append(time.time())

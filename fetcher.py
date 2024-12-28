@@ -126,7 +126,6 @@ class App:
 
         self.time_keeper = TimeKeeper(
             logger=Log("time_keeper").logger,
-            perf=config.backend.performance_logging,
             max_events=config.backend.max_time_keeper_events,
         )
 

@@ -8,6 +8,7 @@ class PerformanceLogger:
             self.logger = logger
             self.start = self._start_enabled
             self.end = self.end_enabled
+            self.end_timer = self.end_timer_enabled
             self.times = {}
             self.cpu_times = {}
             self.orphaned_event_age_seconds = 3600  # 1 hour
@@ -17,6 +18,7 @@ class PerformanceLogger:
             self.logger = None
             self.start = self._noop
             self.end = self._noop
+            self.end_timer = self._noop
 
     def _start_enabled(self, label):
         self.times[label] = time.perf_counter_ns()
@@ -26,7 +28,7 @@ class PerformanceLogger:
         elapsed_ms, elapsed_cpu_ms = self.end_timer(label)
         self._log_end(label, elapsed_ms, elapsed_cpu_ms)
 
-    def end_timer(self, label):
+    def end_timer_enabled(self, label):
         start_time = self.times.pop(label, None)
         start_time_cpu = self.cpu_times.pop(label, None)
 
