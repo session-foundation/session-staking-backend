@@ -98,6 +98,10 @@ CREATE TABLE service_nodes_main (
     swarm TEXT NOT NULL,
     swarm_id TEXT NOT NULL, -- too large to be an int
     total_contributed INTEGER NOT NULL,
+    /** NOTE: The exit details below are unique to the main db */
+    deregistration_height INTEGER,
+    exit_type TEXT,
+    liquidation_height INTEGER,
 
     PRIMARY KEY(contract_id)
 );

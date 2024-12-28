@@ -10,7 +10,7 @@ from arbitrum import (
     update_contribution_contract_details, batch_populate_events_with_block_timestamps, populate_events_with_main_arg,
 )
 from config_validate import validate_config
-from db.dataclasses import RewardsInfo
+from db.dataclasses import RewardsInfo, DBNodeExit
 from db.util import (
     assert_all_dict_values_are_within_sqlite_integer_range,
     is_db_initialized,
@@ -201,6 +201,9 @@ class App:
                         self.time_keeper.add("db_migrate")
                         self.db_writer.write_nodes_to_main_db(network.immutable_block_height)
                         self.time_keeper.end("db_migrate")
+                        self.time_keeper.add("exit_list_update")
+                        self.update_exit_list()
+                        self.time_keeper.end("exit_list_update")
 
                     if (network.block_height - 1) > network_last_fetched_height:
                         self.time_keeper.add("net_update")
@@ -402,7 +405,40 @@ class App:
             self.log.exception(e)
         finally:
             self.log.perf.end("update_service_node_list")
-            return parsed_nodes, contributions, current_height
+            return parsed_nodes, contributions, current_height, len(parsed_nodes), active_node_count
+
+    def update_exit_list(self):
+        self.log.perf.start("update_exit_list")
+        self.log.info("Update exit list task start")
+        exit_liquidation_list = self.rpc.bls_exit_liquidation_list().get()
+
+        if exit_liquidation_list is None:
+            self.log.warning("bls_exit_liquidation_list is None, fetching exit list failed")
+            return
+
+        exit_events = []
+        for entry in exit_liquidation_list:
+
+            pubkey_bls = entry.get("info").get("bls_public_key")
+            if pubkey_bls is None:
+                self.log.warning(f"info.bls_public_key is None for bls_exit_liquidation_list entry: {entry}")
+                continue
+
+            exit_type = entry.get("type")
+            exit_events.append(
+                DBNodeExit(
+                    pubkey_bls=pubkey_bls,
+                    deregistration_height=entry.get("height") if exit_type == "deregister" else None,
+                    exit_type=exit_type,
+                    liquidation_height=entry.get("liquidation_height"),
+                )
+            )
+
+        self.log.debug("Processed {} exit events".format(len(exit_events)))
+        self.db_writer.write_exit_list_to_db(exit_events)
+        self.log.info("Update exit list task finish")
+        self.log.perf.end("update_exit_list")
+
 
     def get_rewards_info(self):
         self.log.perf.start("update_rewards_details")

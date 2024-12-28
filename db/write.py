@@ -6,7 +6,7 @@ from contextlib import closing
 from web3 import Web3
 
 from arbitrum import ContributionContractDetails
-from db.dataclasses import RewardsInfo
+from db.dataclasses import RewardsInfo, DBNodeExit
 from log import Log
 from oxen.rpc import ServiceNode, NetworkInfo
 from web3client.abi_manager import ABIData
@@ -317,6 +317,41 @@ class DBWriter:
                 self.log.info("Transaction committed successfully")
 
         self.log.perf.end("write_nodes_to_main_db")
+
+    def write_exit_list_to_db(self, exit_list: list[DBNodeExit]):
+        self.log.perf.start("write_exit_list_to_db")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug("Updating nodes in main with {} exit events".format(len(exit_list)))
+                self.log.perf.start("write_exit_list_to_db -> insert exit events")
+                cursor.executemany(
+                    """
+                    UPDATE service_nodes_main SET
+                        deregistration_height = ?,
+                        exit_type = ?,
+                        liquidation_height = ?
+                    WHERE pubkey_bls = ?
+                    """,
+                    (
+                        (
+                            e.deregistration_height,
+                            e.exit_type,
+                            e.liquidation_height,
+                            e.pubkey_bls,
+                        )
+                        for e in exit_list
+                    )
+                )
+                inserted_exit_rows = cursor.rowcount
+
+                self.log.perf.end("write_exit_list_to_db -> insert exit events")
+                self.log.debug(
+                    "Inserted {} rows into exit events".format(inserted_exit_rows)
+                )
+
+            connection.commit()
+            self.log.perf.end("write_exit_list_to_db")
 
     def write_network_info_to_db(
         self,

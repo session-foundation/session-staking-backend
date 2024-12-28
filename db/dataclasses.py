@@ -8,7 +8,7 @@ from web3client.event_scanner import ProcessedEvent
 @dataclass
 class DBNode:
     active: bool
-    contract_id: str
+    contract_id: int
     decommission_count: int
     earned_downtime_blocks: int
     fetched_block_height: int
@@ -39,6 +39,12 @@ class DBNode:
     swarm: str
     swarm_id: str
     total_contributed: int
+
+    # Not in staging db, optional in main db
+    deregistration_height: int | None
+    exit_type: str | None
+    liquidation_height: int | None
+
     # Not in db but added after select
     contributors: list | None
     events: list[ProcessedEvent] | None
@@ -52,6 +58,14 @@ class DBNode:
             json.loads(self.storage_server_version) if self.storage_server_version else None
         )
         self.pulse_votes = json.loads(self.pulse_votes) if self.pulse_votes else None
+
+
+@dataclass
+class DBNodeExit:
+    pubkey_bls: str
+    deregistration_height: int | None
+    exit_type: str
+    liquidation_height: int
 
 
 @dataclass

@@ -111,16 +111,22 @@ class DBReader:
         self.log.perf.start("get_nodes")
         with closing(sqlite3.connect(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
+                parsed_nodes = {}
+
                 # TODO: investigate using a join or something less messy than two select * queries
                 cursor.execute("""SELECT * FROM service_nodes_main""")
+
+                for node in cursor.fetchall():
+                    node_dict = DBNode(*node, contributors=[], events=[])
+                    parsed_nodes[node_dict.contract_id] = node_dict
+
                 # We want to sort by fetched_block_height in ascending order so later updates overwrite earlier ones
                 cursor.execute(
                     """SELECT * FROM service_nodes_staging ORDER BY fetched_block_height ASC"""
                 )
 
-                parsed_nodes = {}
                 for node in cursor.fetchall():
-                    node_dict = DBNode(*node, contributors=[])
+                    node_dict = DBNode(*node, exit_type=None, deregistration_height=None, liquidation_height=None, contributors=[], events=[])
                     parsed_nodes[node_dict.contract_id] = node_dict
 
                 cursor.execute("""SELECT * from service_nodes_contributions_main""")
@@ -141,7 +147,25 @@ class DBReader:
                         contribution_dict
                     )
 
-                self.log.debug("Parsed nodes: {}".format(len(parsed_nodes)))
+                contract_ids = list(parsed_nodes.keys())
+
+                placeholder= '?' # For SQLite. See DBAPI paramstyle.
+                placeholders= ', '.join(placeholder for unused in contract_ids)
+                query= 'SELECT * FROM arbitrum_events WHERE main_arg IN (%s) ORDER BY block DESC' % placeholders
+                cursor.execute(query, contract_ids)
+
+                for event in cursor.fetchall():
+                    processed_event = ProcessedEvent(*event)
+                    try:
+                        contract_id = int(processed_event.main_arg)
+                        parsed_nodes[contract_id].events.append(processed_event)
+                    except Exception as e:
+                        self.log.error("Error processing event: {}".format(e))
+                        continue
+
+                nodes_list = list(parsed_nodes.values())
+
+                self.log.debug("Parsed nodes: {}".format(len(nodes_list)))
                 self.log.perf.end("get_nodes")
                 return list(parsed_nodes.values())
 
