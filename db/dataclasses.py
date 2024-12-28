@@ -2,6 +2,8 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
+from web3client.event_scanner import ProcessedEvent
+
 
 @dataclass
 class DBNode:
@@ -39,6 +41,7 @@ class DBNode:
     total_contributed: int
     # Not in db but added after select
     contributors: list | None
+    events: list[ProcessedEvent] | None
 
     def __post_init__(self):
         self.lokinet_version = json.loads(self.lokinet_version) if self.lokinet_version else None

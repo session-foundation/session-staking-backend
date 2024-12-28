@@ -269,6 +269,13 @@ def get_events(count: int, skip: int):
 def get_arbitrum_info():
     return json_response({"info": app.data.get("arbitrum-info", getter=app.db_reader.get_arbitrum_info)})
 
+@app.route("/stake-events/<int:contract_id>")
+def get_stake_events(contract_id: int):
+    if contract_id < 0:
+        return flask.abort(400, "Invalid contract ID")
+
+    return json_response({"events": app.data.get("stake-events-{}".format(contract_id), getter=app.db_reader.get_arbitrum_events_for_stake_contrat_id, getter_args=contract_id)})
+
 """
 //////////////////////////////////////////////////////////////
 //                                                          //

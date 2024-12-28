@@ -154,14 +154,18 @@ CREATE TABLE arbitrum_info (
 CREATE INDEX arbitrum_info_block_idx ON arbitrum_info(block DESC);
 
 CREATE TABLE arbitrum_events (
-    block INTEGER NOT NULL,
-    tx TEXT NOT NULL,
-    name TEXT NOT NULL,
     args TEXT NOT NULL,
+    block INTEGER NOT NULL,
+    main_arg TEXT,
+    name TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    tx TEXT NOT NULL,
     PRIMARY KEY (block, tx, name)
 );
 
 CREATE INDEX arbitrum_events_block_idx ON arbitrum_events(block DESC);
+CREATE INDEX arbitrum_events_block_timestamp ON arbitrum_events(timestamp DESC);
+CREATE INDEX arbitrum_events_main_arg_idx ON arbitrum_events(main_arg, block DESC);
 
 CREATE TABLE contribution_contracts (
     address TEXT NOT NULL,

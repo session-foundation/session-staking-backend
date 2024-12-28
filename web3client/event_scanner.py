@@ -4,7 +4,7 @@
 With the stateful mechanism, you can do one batch scan or incremental scans,
 where events are added wherever the scanner left off.
 """
-
+import json
 import time
 import logging
 from dataclasses import dataclass
@@ -26,10 +26,15 @@ logger.setLevel(logging.DEBUG)
 
 @dataclass
 class ProcessedEvent:
-    tx: str
-    block: int
-    name: str
     args: dict
+    block: int
+    main_arg: str | None
+    name: str
+    timestamp: None | int
+    tx: str
+
+    def __post_init__(self):
+        self.args = json.loads(self.args) if type(self.args) == str else self.args
 
 
 class EventScanner:
@@ -240,7 +245,7 @@ class EventScanner:
         block = event.blockNumber
         name = event.event
         args = event["args"]
-        return ProcessedEvent(tx=tx, block=block, name=name, args=args)
+        return ProcessedEvent(tx=tx, block=block, name=name, args=args, timestamp=None, main_arg=None)
 
     def run(
         self,

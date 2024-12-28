@@ -415,9 +415,9 @@ class App:
             # Populate (Binary ETH wallet address -> accrued_rewards) table
             for address_hex, rewards in accrued_rewards_json.get("balances").items():
                 # Ignore non-ethereum addresses (e.g. left oxen rewards, not relevant)
-                trimmed_address_hex = address_hex[2:] if address_hex.startswith("0x") else address_hex
-                if len(trimmed_address_hex) != 40:
-                    self.log.warning("Invalid address {}".format(trimmed_address_hex))
+                address = address_hex if address_hex.startswith("0x") else "0x" + address_hex
+                if len(address) != 42:
+                    self.log.warning("Invalid address {}".format(address))
                     continue
 
                 rewards_info.append(RewardsInfo(address_hex, rewards))
@@ -469,15 +469,16 @@ class App:
                 contract_details_list, contributions_list
             )
 
-            service_node_rewards_events = self.service_node_rewards.event_scanner.run(
+            events = self.service_node_rewards.event_scanner.run(
                 last_block=last_event_block_height,
                 end_block=end_block,
             )
 
-            service_node_rewards_events.extend(new_contribution_events)
+            events.extend(new_contribution_events)
+            batch_populate_events_with_block_timestamps(self.web3_client, self.log, events)
+            populate_events_with_main_arg(events)
 
-            self.db_writer.write_arbitrum_events_to_db(service_node_rewards_events)
-
+            self.db_writer.write_arbitrum_events_to_db(events)
 
             self.arbitrum_details_last_updated = time.time()
             self.log.perf.end("update_arbitrum_details")

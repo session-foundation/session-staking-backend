@@ -409,17 +409,21 @@ class DBWriter:
                     """
                     INSERT OR REPLACE INTO arbitrum_events (
                         block,
+                        timestamp,
                         tx,
                         name,
+                        main_arg,
                         args
                     )
-                    VALUES (?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         (
                             event.block,
+                            event.timestamp,
                             "0x" + event.tx,
                             event.name,
+                            event.main_arg,
                             Web3.to_json(dict(event.args)),
                         )
                         for event in events

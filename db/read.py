@@ -1,9 +1,12 @@
 import sqlite3
 from contextlib import closing
 
+import eth_utils
+
 from db.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
     DBContributionContractContribution, SmartContractABI, ArbitrumEvent, ArbitrumInfo, RewardsInfo
 from log import Log
+from web3client.event_scanner import ProcessedEvent
 
 
 class DBReader:
@@ -278,3 +281,19 @@ class DBReader:
                 self.log.debug("Arbitrum info: {}".format(info))
                 self.log.perf.end("get_arbitrum_info")
                 return info
+
+    def get_arbitrum_events_for_stake_contrat_id(self, contract_id: int):
+        self.log.perf.start("get_events_for_stake_contrat_id")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM arbitrum_events WHERE main_arg = ? ORDER BY block DESC
+                    """,
+                    (contract_id,),
+                )
+                events = [ArbitrumEvent(*event) for event in cursor.fetchall()]
+                self.log.debug("Arbitrum events: {}".format(len(events)))
+                self.log.perf.end("get_events_for_stake_contrat_id")
+                return events
+
