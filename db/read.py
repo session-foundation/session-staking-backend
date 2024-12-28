@@ -175,8 +175,8 @@ class DBReader:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT * FROM rewards_info")
                 rewards_info = {
-                    address: rewards
-                    for address, rewards in cursor.fetchall()
+                    eth_utils.to_checksum_address(address_hex): rewards
+                    for address_hex, rewards in cursor.fetchall()
                 }
                 self.log.debug("Rewards info: {}".format(len(rewards_info)))
                 self.log.perf.end("get_rewards_info")

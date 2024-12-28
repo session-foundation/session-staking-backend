@@ -461,7 +461,7 @@ class App:
                     self.log.warning("Invalid address {}".format(address))
                     continue
 
-                rewards_info.append(RewardsInfo(address_hex, rewards))
+                rewards_info.append(RewardsInfo(address, rewards))
 
         except Exception as e:
             self.log.error("Error fetching and parsing rewards details")
