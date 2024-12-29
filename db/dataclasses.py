@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
+from util.parse import eth_format
 from web3client.event_scanner import ProcessedEvent
 
 
@@ -172,10 +173,19 @@ class RewardsInfo:
 
 @dataclass
 class Registration:
-    contract: bytes
+    contract: bytes | None
     operator: bytes
     pubkey_bls: bytes
     pubkey_ed25519: bytes
     sig_bls: bytes
     sig_ed25519: bytes
     timestamp: float
+
+    def __post_init__(self):
+        self.contract = self.contract.hex() if self.contract is not None else None
+        self.operator = eth_format(self.operator)
+        self.pubkey_bls = self.pubkey_bls.hex()
+        self.pubkey_ed25519 = self.pubkey_ed25519.hex()
+        self.sig_bls = self.sig_bls.hex()
+        self.sig_ed25519 = self.sig_ed25519.hex()
+

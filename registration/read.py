@@ -1,20 +1,7 @@
 import sqlite3
 from contextlib import closing
-from dataclasses import dataclass
-
+from db.dataclasses import Registration
 from log import Log
-
-
-@dataclass
-class Registration:
-    contract: bytes
-    operator: bytes
-    pubkey_bls: bytes
-    pubkey_ed25519: bytes
-    sig_bls: bytes
-    sig_ed25519: bytes
-    timestamp: float
-
 
 class DBReaderRegistrations:
     def __init__(self, db_path: str, log_level: int, perf: bool = False):

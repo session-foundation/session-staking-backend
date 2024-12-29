@@ -1,5 +1,5 @@
 import re
-from typing import Callable, Any
+from typing import Callable, Any, Union
 from functools import partial
 
 import string
@@ -7,6 +7,7 @@ import string
 import eth_utils
 import flask
 import oxenc
+from eth_typing import ChecksumAddress
 from werkzeug.routing import BaseConverter
 
 eth_regex = "0x[0-9a-fA-F]{40}"
@@ -38,6 +39,11 @@ def hexify(container):
         else:
             hexify(v)
 
+def eth_format(addr: Union[bytes, str]) -> ChecksumAddress:
+    try:
+        return eth_utils.to_checksum_address(addr)
+    except ValueError:
+        raise ParseError(addr, "Invalid ETH address")
 
 class EthConverter(BaseConverter):
     def __init__(self, url_map):
