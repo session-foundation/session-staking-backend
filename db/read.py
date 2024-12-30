@@ -6,6 +6,7 @@ import eth_utils
 from db.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
     DBContributionContractContribution, SmartContractABI, ArbitrumEvent, ArbitrumInfo, RewardsInfo
 from log import Log
+from util.parse import eth_format
 from web3client.event_scanner import ProcessedEvent
 
 
@@ -127,17 +128,27 @@ class DBReader:
 
                 for node in cursor.fetchall():
                     node_dict = DBNode(*node, exit_type=None, deregistration_height=None, liquidation_height=None, contributors=[], events=[])
+                    existing_node = parsed_nodes.get(node_dict.contract_id)
+                    if existing_node is not None:
+                        existing_node.exit_type = node_dict.exit_type
+                        existing_node.deregistration_height = node_dict.deregistration_height
+                        existing_node.liquidation_height = node_dict.liquidation_height
                     parsed_nodes[node_dict.contract_id] = node_dict
 
+
                 cursor.execute("""SELECT * from service_nodes_contributions_main""")
+
+                db_contributions_main = [DBContributionMain(*contribution) for contribution in cursor.fetchall()]
+
                 # We want to sort by fetched_block_height in ascending order so later updates overwrite earlier ones
                 cursor.execute(
                     """SELECT * from service_nodes_contributions_staging ORDER BY fetched_block_height ASC"""
                 )
 
+                db_contributions_staging = [DBContributionMain(*contribution) for contribution in cursor.fetchall()]
+
                 parsed_contributions = {}
-                for contribution in cursor.fetchall():
-                    contribution_dict = DBContributionMain(*contribution)
+                for contribution_dict in db_contributions_main + db_contributions_staging:
                     # TODO: there has to be a better way to override the old data with new data
                     key = f"{contribution_dict.contract_id}{contribution_dict.address}"
                     parsed_contributions[key] = contribution_dict
@@ -175,7 +186,7 @@ class DBReader:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT * FROM rewards_info")
                 rewards_info = {
-                    eth_utils.to_checksum_address(address_hex): rewards
+                    eth_format(address_hex): rewards
                     for address_hex, rewards in cursor.fetchall()
                 }
                 self.log.debug("Rewards info: {}".format(len(rewards_info)))
