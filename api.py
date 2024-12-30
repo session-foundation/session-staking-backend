@@ -6,13 +6,16 @@ import time
 import eth_utils
 import subprocess
 
+from eth_typing import ChecksumAddress
+
 import config
 from db.read import DBReader
 from log import Log
 from oxen.rpc import OxenRPC
 from registration.read import DBReaderRegistrations
 from util.data import DataManager
-from util.parse import Hex64Converter, hexify, EthConverter
+from util.parse import Hex64Converter, hexify, EthConverter, eth_format
+
 
 class App(flask.Flask):
     def __init__(self, name):
@@ -116,6 +119,7 @@ def get_nodes_cached():
 def get_nodes():
     return json_response({"nodes": get_nodes_cached()})
 
+# TODO: Get from contract
 def get_nodes_bls_keys_uncached():
     return [node.pubkey_bls for node in get_nodes_cached()]
 
@@ -131,32 +135,30 @@ def get_nodes_bls_keys():
 //////////////////////////////////////////////////////////////
 """
 
-def get_related_stakes_for_eth_address_uncached(eth_wal: str):
+def get_related_stakes_for_eth_address_uncached(address: ChecksumAddress):
     nodes = get_nodes_cached()
 
     related_nodes = []
     for node in nodes:
-        if node.operator_address == eth_wal:
+        if eth_format(node.operator_address) == address:
             related_nodes.append(node)
         elif node.contributors is not None:
             for contributor in node.contributors:
-                if contributor.address == eth_wal:
+                if eth_format(contributor.address) == address:
                     related_nodes.append(node)
 
     return related_nodes
 
-def get_related_stakes_for_eth_address_cached(eth_wal: str):
-    return app.data.get("related-stakes-{}".format(eth_wal), getter=get_related_stakes_for_eth_address_uncached, getter_args=eth_wal)
+def get_related_stakes_for_eth_address_cached(address: ChecksumAddress):
+    return app.data.get("related-stakes-{}".format(address), getter=get_related_stakes_for_eth_address_uncached, getter_args=address)
 
 # TODO: might make sense to investigate storing contributor and operator addresses in the db as blobs and compare with bytes
 @app.route("/stakes/<eth_wallet:eth_wal>")
 @app.route("/nodes/<eth_wallet:eth_wal>")
 def get_stakes_for_eth_address(eth_wal: str):
     try:
-        if not eth_wal or not eth_utils.is_address(eth_wal):
-            raise ValueError("Invalid wallet address")
-
-        return json_response({"stakes": get_related_stakes_for_eth_address_cached(eth_wal), "contracts": get_related_contribution_contracts_for_eth_address_cached(eth_wal)})
+        address = eth_format(eth_wal)
+        return json_response({"stakes": get_related_stakes_for_eth_address_cached(address), "contracts": get_related_contribution_contracts_for_eth_address_cached(address)})
 
     except ValueError as e:
         app.logger.error(f"Exception: {e}")
@@ -354,13 +356,14 @@ def get_liquidation(ed25519_pubkey: bytes):
     return handle_get_exit_and_liquidation(ed25519_pubkey, liquidate=True)
 
 
+def get_exit_liquidation_list_uncached():
+    return app.rpc.bls_exit_liquidation_list().get()
+
 @app.route("/exit_liquidation_list")
 def get_exit_liquidation_list():
-    # TODO: add exit list management to main.py and main database and implement db_reader.get_exitable_nodes
-    # return json_response(
-    #     {"result": app.data.get("exit_liquidation_list", getter=app.db_reader.get_exitable_nodes)}
-    # )
-    return json_response({"result": []})
+    return json_response(
+        {"result": app.data.get("exit_liquidation_list", getter=get_exit_liquidation_list_uncached)}
+    )
 
 
 """
@@ -371,24 +374,24 @@ def get_exit_liquidation_list():
 //////////////////////////////////////////////////////////////
 """
 
-def get_rewards_signature_uncached(eth_wal: str):
-    if not eth_wal or not eth_utils.is_address(eth_wal):
-        raise ValueError("Invalid wallet address")
-    response = app.rpc.bls_rewards_request(eth_utils.to_checksum_address(eth_wal)).get()
+def get_rewards_signature_uncached(address: ChecksumAddress):
+    response = app.rpc.bls_rewards_request(address).get()
     if response is None:
         raise TimeoutError("Failed to get rewards signature")
     return response
 
 @app.route("/rewards/<eth_wallet:eth_wal>", methods=["GET", "POST"])
 def get_rewards(eth_wal: str):
+    address = eth_format(eth_wal)
+
     if flask.request.method == "GET":
         # We cache all rewards info for all wallets so we don't need to multiple reads in a short period of time
         rewards_info = app.data.get(f"rewards_info", getter=app.db_reader.get_rewards_info)
-        return json_response({"rewards": rewards_info.get(eth_wal, 0)})
+        return json_response({"rewards": rewards_info.get(address, 0)})
 
     if flask.request.method == "POST":
         try:
-            response = app.data.get(f"rewards-sig-{eth_wal}", getter=get_rewards_signature_uncached, getter_args=eth_wal)
+            response = app.data.get(f"rewards-sig-{address}", getter=get_rewards_signature_uncached, getter_args=address)
             if "status" in response:
                 response.pop("status")
             if "address" in response:
