@@ -5,9 +5,8 @@ import flask
 import time
 import eth_utils
 import subprocess
-
 from eth_typing import ChecksumAddress
-
+from uwsgidecorators import timer
 import config
 from db.read import DBReader
 from log import Log
@@ -55,10 +54,12 @@ class App(flask.Flask):
         )
 
         self.rpc = OxenRPC(
-            self.log,
-            rpc_url,
-            rpc_cache,
+            logger=self.log,
+            rpc_url=rpc_url,
+            cache_seconds=rpc_cache,
+            usage_tracking=config.backend.rpc_api_usage_logging,
         )
+
         self.loop_sleep_refresh_rate_seconds = rpc_cache if rpc_cache > 0 else 5
 
         self.data = DataManager(stale_time_seconds=config.backend.stale_time_seconds)
@@ -476,3 +477,25 @@ def bootstrap():
 
 
 bootstrap()
+
+
+if config.backend.rpc_api_usage_logging:
+    def log_rpc_usage(signum):
+        app.logger.info("Logging RPC usage for {}".format(signum))
+        app.rpc.usage_tracker.log_usage()
+
+    @timer(config.backend.rpc_api_usage_logging_interval, target="worker1")
+    def log_rpc_usage_w1(signum):
+        log_rpc_usage(signum)
+
+    @timer(config.backend.rpc_api_usage_logging_interval, target="worker2")
+    def log_rpc_usage_w2(signum):
+        log_rpc_usage(signum)
+
+    @timer(config.backend.rpc_api_usage_logging_interval, target="worker3")
+    def log_rpc_usage_w3(signum):
+        log_rpc_usage(signum)
+
+    @timer(config.backend.rpc_api_usage_logging_interval, target="worker4")
+    def log_rpc_usage_w4(signum):
+        log_rpc_usage(signum)

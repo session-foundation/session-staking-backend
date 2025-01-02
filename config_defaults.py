@@ -34,6 +34,8 @@ class Backend:
     api_name:                       str = "api"
     rpc_api:                        str = ""
     rpc_api_cache:                  int = 2
+    rpc_api_usage_logging:         bool = False
+    rpc_api_usage_logging_interval: int = 600
     """
     REGISTRATION CONFIG
     """
@@ -60,6 +62,7 @@ class Backend:
     performance_logging:          bool = False
     rpc_fetcher:                   str = ""
     rpc_fetcher_cache:             int = 2
+    rpc_fetcher_usage_logging:    bool = False
     stale_time_seconds:            int = 30
     stale_time_seconds_contract_abis: int = 300
     thread_pool_max_workers:       int = 50

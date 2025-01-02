@@ -87,10 +87,12 @@ class App:
         )
 
         self.rpc = OxenRPC(
-            self.log,
-            rpc_url,
-            rpc_cache,
+            logger=self.log,
+            rpc_url=rpc_url,
+            cache_seconds=rpc_cache,
+            usage_tracking=config.backend.rpc_fetcher_usage_logging,
         )
+
         self.loop_sleep_refresh_rate_seconds = rpc_cache if rpc_cache > 0 else 5
 
         self.arbitrum_details_last_updated = 0
@@ -200,12 +202,10 @@ class App:
                         self.time_keeper.end("arb_update")
 
                     if network.immutable_block_height > network_last_commited_height:
-                        self.time_keeper.add("db_migrate")
+                        self.time_keeper.add("db_migrate_and_update_exit_list")
                         self.db_writer.write_nodes_to_main_db(network.immutable_block_height)
-                        self.time_keeper.end("db_migrate")
-                        self.time_keeper.add("exit_list_update")
                         self.update_exit_list()
-                        self.time_keeper.end("exit_list_update")
+                        self.time_keeper.end("db_migrate_and_update_exit_list")
 
                     if (network.block_height - 1) > network_last_fetched_height:
                         self.time_keeper.add("net_update")
@@ -214,6 +214,7 @@ class App:
 
                     self.log.perf.end("loop")
                     self.time_keeper.log_time_keeper()
+                    self.rpc.usage_tracker.log_usage()
 
                     now = time.time()
                     arb_next_update = (
