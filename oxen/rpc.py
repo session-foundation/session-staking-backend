@@ -1,6 +1,6 @@
 import logging
 from typing import TypedDict
-from oxen.omq import FutureJSON, omq_connection
+from oxen.omq import FutureJSON, omq_connection, RPCUsageTracker
 from dataclasses import dataclass
 
 
@@ -66,78 +66,63 @@ class NetworkInfo:
 
 
 class OxenRPC:
-    def __init__(self, logger: logging, rpc_url: str, cache_seconds: float | None = None):
+    def __init__(self, logger: logging, rpc_url: str, cache_seconds: float | None = None, usage_tracking: bool = False):
         self.log = logger
         self.rpc_url = rpc_url
         self.cache_seconds = cache_seconds
+        self.usage_tracker = RPCUsageTracker(usage_tracking, self.log)
 
-    def get_accrued_rewards(self) -> FutureJSON:
+    def FutureJSON(self,endpoint: str, args: dict | None = None, cache_seconds: float | None = None):
         omq, oxend = omq_connection(self.rpc_url)
         return FutureJSON(
-            omq,
-            oxend,
+            omq=omq,
+            oxend=oxend,
+            endpoint=endpoint,
+            args=args,
+            cache_seconds=cache_seconds if cache_seconds is not None else self.cache_seconds,
+            rpc_usage_tracker=self.usage_tracker,
+        )
+
+    def get_accrued_rewards(self) -> FutureJSON:
+        return self.FutureJSON(
             "rpc.get_accrued_rewards",
             args={"addresses": []},
-            cache_seconds=self.cache_seconds,
         )
 
     def bls_rewards_request(self, eth_address: str) -> FutureJSON:
-        omq, oxend = omq_connection(self.rpc_url)
         eth_address_for_rpc = eth_address.lower()
         if eth_address_for_rpc.startswith("0x"):
             eth_address_for_rpc = eth_address_for_rpc[2:]
-        result = FutureJSON(
-            omq,
-            oxend,
+        result = self.FutureJSON(
             "rpc.bls_rewards_request",
             args={"address": eth_address_for_rpc},
-            cache_seconds=self.cache_seconds,
         )
         return result
 
     def bls_exit_liquidation_request(self, ed25519_pubkey: bytes, liquidate: bool) -> FutureJSON:
-        omq, oxend = omq_connection(self.rpc_url)
-        return FutureJSON(
-            omq,
-            oxend,
+        return self.FutureJSON(
             "rpc.bls_exit_liquidation_request",
             args={"pubkey": ed25519_pubkey.hex(), "liquidate": liquidate},
-            cache_seconds=self.cache_seconds,
         )
 
     def bls_exit_liquidation_list(self) -> FutureJSON:
-        omq, oxend = omq_connection(self.rpc_url)
-        return FutureJSON(
-            omq,
-            oxend,
+        return self.FutureJSON(
             "rpc.bls_exit_liquidation_list",
-            cache_seconds=self.cache_seconds,
         )
 
     def get_info(self) -> FutureJSON:
-        omq, oxend = omq_connection(self.rpc_url)
-        return FutureJSON(
-            omq,
-            oxend,
+        return self.FutureJSON(
             "rpc.get_info",
-            cache_seconds=self.cache_seconds,
         )
 
     def get_last_block_header(self) -> FutureJSON:
-        omq, oxend = omq_connection(self.rpc_url)
-        return FutureJSON(
-            omq,
-            oxend,
+        return self.FutureJSON(
             "rpc.get_last_block_header",
             args={"fill_pow_hash": False, "get_tx_hashes": False},
-            cache_seconds=self.cache_seconds,
         )
 
     def get_service_nodes(self) -> FutureJSON:
-        omq, oxend = omq_connection(self.rpc_url)
-        return FutureJSON(
-            omq,
-            oxend,
+        return self.FutureJSON(
             "rpc.get_service_nodes",
             args={
                 "all": True,
@@ -169,7 +154,6 @@ class OxenRPC:
                 #     )
                 # },
             },
-            cache_seconds=self.cache_seconds,
         )
 
     def get_network_info_from_network(self):
