@@ -13,6 +13,11 @@ from werkzeug.routing import BaseConverter
 eth_regex = "0x[0-9a-fA-F]{40}"
 
 
+def parse_bls_pubkey(bls_pubkey: (str, str)):
+    x, y = bls_pubkey
+    return f"{x:064x}{y:064x}"
+
+
 def raw_eth_addr(k, v):
     if re.fullmatch(eth_regex, v):
         if not eth_utils.is_address(v):
