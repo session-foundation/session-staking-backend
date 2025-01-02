@@ -1,10 +1,8 @@
 import sqlite3
 from contextlib import closing
 
-import eth_utils
-
 from db.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
-    DBContributionContractContribution, SmartContractABI, ArbitrumEvent, ArbitrumInfo, RewardsInfo
+    DBContributionContractContribution, SmartContractABI, ArbitrumInfo
 from log import Log
 from util.parse import eth_format
 from web3client.event_scanner import ProcessedEvent
@@ -283,21 +281,22 @@ class DBReader:
                 self.log.perf.end("get_smart_contract_address")
                 return address[0]
 
-    def get_arbitrum_events(self, args=None):
+    def get_arbitrum_events_page(self, args=None):
         if args is None:
             args = [1000, 0]
         self.log.perf.start("get_arbitrum_events")
         with closing(sqlite3.connect(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
-                limit = args[0]
-                skip = args[1]
+                limit = args[0] if len(args) > 0 else 1000
+                skip = args[1] if len(args) > 1 else 0
+
                 cursor.execute(
                     """
                     SELECT * FROM arbitrum_events ORDER BY block DESC LIMIT ? OFFSET ?
                     """,
                     (limit, skip),
                 )
-                events = [ArbitrumEvent(*event) for event in cursor.fetchall()]
+                events = [ProcessedEvent(*event) for event in cursor.fetchall()]
                 self.log.debug("Arbitrum events: {}".format(len(events)))
                 self.log.perf.end("get_arbitrum_events")
 
@@ -305,6 +304,36 @@ class DBReader:
                 total = cursor.fetchone()[0]
 
                 return events, limit, skip, total
+
+    def get_arbitrum_events_since_timestamp(self, params: [int, list[str] | None]) -> list[ProcessedEvent]:
+        timestamp = params[0] if len(params) > 0 else None
+        events_types = params[1] if len(params) > 1 and len(params[1]) > 0 else None
+
+        if timestamp is None or (not isinstance(timestamp, int) and not isinstance(timestamp, float)):
+            raise ValueError("Invalid timestamp, timestamp must be an integer or float")
+
+        if events_types is not None:
+            if isinstance(events_types, str):
+                events_types = [events_types]
+            elif not isinstance(events_types, list):
+                raise ValueError("Invalid events_types, events_types must be a list of strings or a string")
+
+
+        self.log.perf.start("get_arbitrum_events_since_timestamp")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                if events_types is None:
+                    cursor.execute("SELECT * FROM arbitrum_events WHERE timestamp > ? ORDER BY timestamp DESC", (timestamp,))
+                else:
+                    placeholder= '?' # For SQLite. See DBAPI paramstyle.
+                    placeholders= ', '.join(placeholder for unused in events_types)
+                    query= 'SELECT * FROM arbitrum_events WHERE timestamp > ? AND name IN (%s) ORDER BY timestamp DESC' % placeholders
+                    cursor.execute(query, (timestamp, *events_types))
+                    # cursor.execute("SELECT * FROM arbitrum_events WHERE timestamp > ? AND name IN ({}) ORDER BY timestamp DESC".format(",".join(["?"]*len(events_types))), tuple(events_types)+(timestamp,))
+                events = [ProcessedEvent(*event) for event in cursor.fetchall()]
+                self.log.debug("Arbitrum events: {}".format(len(events)))
+                self.log.perf.end("get_arbitrum_events_since_timestamp")
+                return events
 
     def get_arbitrum_info(self):
         self.log.perf.start("get_arbitrum_info")
@@ -327,7 +356,7 @@ class DBReader:
                     """,
                     (contract_id,),
                 )
-                events = [ArbitrumEvent(*event) for event in cursor.fetchall()]
+                events = [ProcessedEvent(*event) for event in cursor.fetchall()]
                 self.log.debug("Arbitrum events: {}".format(len(events)))
                 self.log.perf.end("get_events_for_stake_contrat_id")
                 return events
