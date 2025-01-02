@@ -77,7 +77,7 @@ class RPCUsageTracker:
     def add_cached_enabled(self, endpoint: str):
         self.uses_cached.setdefault(endpoint, []).append(datetime.now().timestamp())
 
-    def log_usage_enabled(self, msg: str):
+    def log_usage_enabled(self, msg: str = ""):
         msg += "\nRPC usage tracking: (s/f/c {}/{}/{})\n".format(len(self.uses_success), len(self.uses_failed), len(self.uses_cached))
         unique_endpoints: dict[str, dict[str, list[float]]] = {}
 
