@@ -72,7 +72,7 @@ class OxenRPC:
         self.cache_seconds = cache_seconds
         self.usage_tracker = RPCUsageTracker(usage_tracking, self.log)
 
-    def FutureJSON(self,endpoint: str, args: dict | None = None, cache_seconds: float | None = None):
+    def FutureJSON(self,endpoint: str, args: dict | None = None, cache_seconds: float | None = None, timeout: int | None = None):
         omq, oxend = omq_connection(self.rpc_url)
         return FutureJSON(
             omq=omq,
@@ -80,6 +80,7 @@ class OxenRPC:
             endpoint=endpoint,
             args=args,
             cache_seconds=cache_seconds if cache_seconds is not None else self.cache_seconds,
+            timeout=timeout,
             rpc_usage_tracker=self.usage_tracker,
         )
 
@@ -96,6 +97,7 @@ class OxenRPC:
         result = self.FutureJSON(
             "rpc.bls_rewards_request",
             args={"address": eth_address_for_rpc},
+            timeout=20,
         )
         return result
 
