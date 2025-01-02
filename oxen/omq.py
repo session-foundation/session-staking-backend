@@ -1,9 +1,50 @@
 import logging
+from collections import defaultdict
+
 import oxenmq
 import json
 import sys
 from datetime import datetime, timedelta
 
+def format_table(table: list[list[str| float | int]]):
+    """
+    Formats a table of values into a string.
+    :param table: list of lists of values
+    :return: string
+    """
+    # stringify every value in the table
+    table = [[str(v) for v in row] for row in table]
+    # find the maximum width of each column
+    column_widths = [max(len(row[i]) for row in table) for i in range(len(table[0]))]
+    # pad each column to the maximum width
+    padded_table = [[row[i].ljust(column_widths[i]) for i in range(len(row))] for row in table]
+    # join each row with a space separator
+    padded_table = ["    ".join(row) for row in padded_table]
+    # join each row with a newline separator
+    return "\n".join(padded_table)
+
+def bin_histogram_timestamps(timestamps, bin_size_seconds):
+    """
+    Bins a histogram of timestamps into a histogram of bins of size 'bin_size_seconds'.
+
+    :param timestamps: list of timestamps
+    :param bin_size_seconds: size of each bin in seconds
+    :return: dict of bins to counts
+    """
+    bins = defaultdict(int)
+    for t in timestamps:
+        t_int = int(t)
+        bin_key = t_int // bin_size_seconds
+        bins[bin_key] += 1
+
+    max_count_adjusted = 0
+    max_count_timestamp = 0
+    for k, v in bins.items():
+        if v > max_count_adjusted:
+            max_count_adjusted = v / bin_size_seconds
+            max_count_timestamp = k * bin_size_seconds
+
+    return bins, max_count_timestamp, max_count_adjusted
 
 class RPCUsageTracker:
     def __init__(self, enabled: bool, log: logging):
@@ -36,8 +77,8 @@ class RPCUsageTracker:
     def add_cached_enabled(self, endpoint: str):
         self.uses_cached.setdefault(endpoint, []).append(datetime.now().timestamp())
 
-    def log_usage_enabled(self):
-        self.log.info("RPC usage tracking: (s/f/c {}/{}/{})".format(len(self.uses_success), len(self.uses_failed), len(self.uses_cached)))
+    def log_usage_enabled(self, msg: str):
+        msg += "\nRPC usage tracking: (s/f/c {}/{}/{})\n".format(len(self.uses_success), len(self.uses_failed), len(self.uses_cached))
         unique_endpoints: dict[str, dict[str, list[float]]] = {}
 
         for endpoint, timestamps in self.uses_success.items():
@@ -53,6 +94,7 @@ class RPCUsageTracker:
             unique_endpoints[endpoint]["cached"].extend(timestamps)
 
         for endpoint, timestamps in unique_endpoints.items():
+            log_lines = []
             stats_success = timestamps["success"]
             stats_failed = timestamps["failed"]
             stats_cached = timestamps["cached"]
@@ -70,25 +112,58 @@ class RPCUsageTracker:
 
             ts_first = timestamps_all[0]
             ts_last = timestamps_all[-1]
-            ts_delta = ts_last - ts_first
+            total_time_seconds = ts_last - ts_first
 
-            if ts_delta == 0:
+            if total_time_seconds == 0:
                 continue
 
-            avg_rpm = total / ts_delta
+            current_time = datetime.now().timestamp()
 
-            now = datetime.now().timestamp()
+            # ---- 1. Average RPS over all time ----
+            rps_avg = total / total_time_seconds
 
-            last_hour_timestamps = [t for t in timestamps_all if t > now - 3600]
-            last_10_minutes_timestamps = [t for t in last_hour_timestamps if t > now - 600]
+            # ---- 2. Average RPS in the last hour ----
+            one_hour_ago = current_time - 3600
+            last_hour_timestamps = [ts for ts in timestamps_all if ts >= one_hour_ago]
+            # If you want a simple “count / 3600”, do:
+            rps_avg_last_hour = len(last_hour_timestamps) / 3600.0
 
-            avg_rpm_last_hour = len(last_hour_timestamps) / 3600
-            avg_rpm_last_10_minutes = len(last_10_minutes_timestamps) / 600
+            # ---- 3. Average RPS in the last 10 minutes (600 seconds) ----
+            ten_minutes_ago = current_time - 600
+            last_10m_timestamps = [ts for ts in last_hour_timestamps if ts >= ten_minutes_ago]
+            rps_avg_last_10_minutes = len(last_10m_timestamps) / 600.0
 
-            self.log.info(f"Endpoint: {endpoint}")
-            self.log.info(f"  Total: {total} ({total_success} success, {total_failure} failure, {total_cached} cached)")
-            self.log.info(f"  RPM: {avg_rpm} avg (last hour: {avg_rpm_last_hour}, last 10m: {avg_rpm_last_10_minutes})")
+            # ---- 4. Average RPS in the last 1 minute (60 seconds) ----
+            one_minute_ago = current_time - 60
+            last_1m_timestamps = [ts for ts in last_10m_timestamps if ts >= one_minute_ago]
+            rps_avg_last_1_minute = len(last_1m_timestamps) / 60.0
 
+            # ---- 5. Peak RPS over the past hour ----
+            (h_1h_sec, rps_peak_time_1h_sec, rps_peak_1h_sec) = bin_histogram_timestamps(last_hour_timestamps, bin_size_seconds=1)
+            (h_1h_min, rps_peak_time_1h_min, rps_peak_1h_min) = bin_histogram_timestamps(last_hour_timestamps, bin_size_seconds=60)
+
+            # ---- 6. Peak RPS over the past hour binned every 10 minutes----
+            (h_10m_sec, rps_peak_time_10m_sec, rps_peak_10m_sec) = bin_histogram_timestamps(last_10m_timestamps, bin_size_seconds=1)
+            (h_10m_min, rps_peak_time_10m_min, rps_peak_10m_min) = bin_histogram_timestamps(last_10m_timestamps, bin_size_seconds=60)
+
+            log_lines.append(f"{endpoint} | Total: {total} ({total_success} success, {total_failure} failure, {total_cached} cached)")
+
+            stats = [
+                ["Period", "#", "RPS", "Peak RPS (1s bin)", "Peak RPS Time (1s bin)", "Peak RPS (1m bin)",
+                 "Peak RPS Time (1m bin)"],
+                [f"Life ({total_time_seconds:.0f}s)", f"{total}", f"{rps_avg:.2f}", "", "", "", ""],
+                [f"< 1h", len(last_hour_timestamps), f"{rps_avg_last_hour:.2f}", f"{rps_peak_1h_sec:.2f}",
+                 rps_peak_time_1h_sec, f"{rps_peak_1h_min:.2f}", rps_peak_time_1h_min],
+                [f"< 10m", len(last_10m_timestamps), f"{rps_avg_last_10_minutes:.2f}", f"{rps_peak_10m_sec:.2f}",
+                 rps_peak_time_10m_sec, f"{rps_peak_10m_min:.2f}", rps_peak_time_10m_min],
+                [f"< 1m", len(last_1m_timestamps), f"{rps_avg_last_1_minute:.2f}", "", "", "", ""]]
+
+            log_lines.append(format_table(stats))
+
+            # self.log.info(f"  Requests in past {total} ({total_success} success, {total_failure} failure, {total_cached} cached)")
+            # self.log.info(f"  Avg requests per second: {rps_avg:.2f} avg (last hour: {rps_avg_last_hour:.2f}, last 10m: {rps_avg_last_10_minutes:.2f})")
+            msg += ("\n".join(log_lines))
+        self.log.info(msg)
 
 omq, oxend = None, None
 

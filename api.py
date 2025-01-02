@@ -481,8 +481,7 @@ bootstrap()
 
 if config.backend.rpc_api_usage_logging:
     def log_rpc_usage(signum):
-        app.logger.info("Logging RPC usage for {}".format(signum))
-        app.rpc.usage_tracker.log_usage()
+        app.rpc.usage_tracker.log_usage("Logging RPC usage for {}".format(signum))
 
     @timer(config.backend.rpc_api_usage_logging_interval, target="worker1")
     def log_rpc_usage_w1(signum):
