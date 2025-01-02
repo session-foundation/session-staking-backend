@@ -304,7 +304,7 @@ def get_contract_address(contract_name: str):
 
 def get_events_handler(count_limit=500, skip=0):
     limit = min(count_limit, 500)
-    events, limit, skip, total = app.data.get("events-{}-{}".format(count_limit,skip), getter=app.db_reader.get_arbitrum_events, getter_args=[limit, skip], ttl=10)
+    events, limit, skip, total = app.data.get("events-{}-{}".format(count_limit,skip), getter=app.db_reader.get_arbitrum_events_page, getter_args=[limit, skip], ttl=10)
     pagination = {"limit": limit, "skip": skip, "total": total}
 
     return {"events": events, "pagination": pagination}

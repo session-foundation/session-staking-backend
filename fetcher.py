@@ -22,6 +22,7 @@ from log import Log
 from oxen.rpc import ServiceNode, OxenRPC, NetworkInfo
 from util import format_seconds, is_not_empty_string
 from log.time_keeper import TimeKeeper
+from util.parse import parse_bls_pubkey
 from web3client.abi_manager import ABIManager
 from web3client.client import Web3Client
 from web3client.contracts.reward_rate_pool import RewardRatePoolInterface
@@ -93,6 +94,8 @@ class App:
         self.loop_sleep_refresh_rate_seconds = rpc_cache if rpc_cache > 0 else 5
 
         self.arbitrum_details_last_updated = 0
+
+        self.arbitrum_node_add_events_bls_key_to_timestamp_map = {}
 
         self.web3_client = Web3Client(
             provider_urls=config.backend.web3_provider_urls,
@@ -492,6 +495,8 @@ class App:
                 end_block,
             )
 
+            # Writing contract details to db
+
             new_contracts = []
             for contract in new_contribution_contracts:
                 self.service_node_contribution_multi[contract.contract_address] = contract
@@ -501,13 +506,7 @@ class App:
 
             self.db_writer.write_smart_contract_details_to_db(new_contracts)
 
-            contract_details_list, contributions_list = update_contribution_contract_details(
-                self.web3_client, self.log, list(self.service_node_contribution_multi.values())
-            )
-
-            self.db_writer.write_contribution_contracts_to_db(
-                contract_details_list, contributions_list
-            )
+            # NOTE: Writes events to db BEFORE writing contribution contracts to db so the events are available for the "recent_add_node_events_since_last_update" function
 
             events = self.service_node_rewards.event_scanner.run(
                 last_block=last_event_block_height,
@@ -520,12 +519,37 @@ class App:
 
             self.db_writer.write_arbitrum_events_to_db(events)
 
+            # Writing contribution contract details to db (if there are any)
+
+            contrib_contract_list = list(self.service_node_contribution_multi.values())
+            if len(contrib_contract_list) > 0:
+                contract_details_list, contributions_list = update_contribution_contract_details(
+                    self.web3_client, self.log, contrib_contract_list
+                )
+
+                recent_add_node_event_timestamps = self.get_arbitrum_node_add_events_since_last_update()
+
+                self.db_writer.write_contribution_contracts_to_db(
+                    contract_details_list, contributions_list, recent_add_node_event_timestamps
+                )
+            else:
+                self.log.info("No contribution contracts to write to db")
+
             self.arbitrum_details_last_updated = time.time()
             self.log.perf.end("update_arbitrum_details")
 
         except Exception as e:
             self.log.error("Error fetching and parsing arbitrum details")
             self.log.exception(e)
+
+    def get_arbitrum_node_add_events_since_last_update(self):
+        recent_add_node_events = self.db_reader.get_arbitrum_events_since_timestamp([self.arbitrum_details_last_updated, ['NewServiceNodeV2']])
+        for event in recent_add_node_events:
+            pubkey_bls_encoded = event.args.get("pubkey")
+            pubkey_bls = parse_bls_pubkey((pubkey_bls_encoded["X"], pubkey_bls_encoded["Y"]))
+            self.arbitrum_node_add_events_bls_key_to_timestamp_map["0x{}".format(pubkey_bls)] = event.timestamp
+
+        return self.arbitrum_node_add_events_bls_key_to_timestamp_map
 
 
 app = App(config.backend.fetcher_name if config.backend.fetcher_name else __name__)

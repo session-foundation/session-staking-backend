@@ -115,6 +115,7 @@ class DBNetworkInfo:
 class DBContributionContract:
     address: str
     fee: int
+    node_add_timestamp: int
     operator_address: str
     pubkey_bls: str
     service_node_pubkey: str
