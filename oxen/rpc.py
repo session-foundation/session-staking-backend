@@ -97,7 +97,7 @@ class OxenRPC:
         result = self.FutureJSON(
             "rpc.bls_rewards_request",
             args={"address": eth_address_for_rpc},
-            timeout=20,
+            timeout=30,
         )
         return result
 
@@ -105,6 +105,7 @@ class OxenRPC:
         return self.FutureJSON(
             "rpc.bls_exit_liquidation_request",
             args={"pubkey": ed25519_pubkey.hex(), "liquidate": liquidate},
+            timeout=30,
         )
 
     def bls_exit_liquidation_list(self) -> FutureJSON:
