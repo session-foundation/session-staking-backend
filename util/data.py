@@ -8,8 +8,8 @@ class DataManager:
         self.cache_expiry = {}
         self.default_stale_time_seconds = stale_time_seconds
 
-    def get(self, key, getter=Optional[Callable], getter_args=None, ttl=0):
-        if ttl == 0:
+    def get(self, key, getter=Optional[Callable], getter_args=None, ttl=None):
+        if ttl is None or ttl < 0:
             ttl = self.default_stale_time_seconds
         now = time.time()
         if key in self.cache and self.cache_expiry[key] > now:

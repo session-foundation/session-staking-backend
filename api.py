@@ -233,6 +233,22 @@ def get_open_contract_details():
         {"contracts": get_contribution_contracts_cached()}
     )
 
+def get_contribution_contract_for_sn_pubkey_uncached(sn_pubkey: bytes):
+    cached_contracts = get_contribution_contracts_cached()
+    for contract in cached_contracts:
+        print(f"contract.service_node_pubkey: {contract.service_node_pubkey}")
+        print(f"sn_pubkey: {sn_pubkey}")
+        if contract.service_node_pubkey == sn_pubkey:
+            return contract
+    return None
+
+@app.route("/contract/contribution/<hex64:sn_pubkey>")
+def get_contribution_contract_for_sn_pubkey_cached(sn_pubkey: bytes):
+    key = sn_pubkey.hex()
+    return json_response(
+        {"contract": app.data.get("contract-sn-{}".format(key), getter=get_contribution_contract_for_sn_pubkey_uncached, getter_args=key, ttl=5)}
+    )
+
 def get_related_contribution_contracts_for_eth_address_uncached(eth_wal: str):
     contracts = get_contribution_contracts_cached()
 
