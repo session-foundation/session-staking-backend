@@ -219,3 +219,12 @@ CREATE TABLE smart_contracts (
 
     foreign key (name) references smart_contract_abis(name)
 );
+
+CREATE TABLE service_node_rewards_contract_id_bls_key_map (
+    contract_id INTEGER NOT NULL,
+    pubkey_bls BLOB NOT NULL,
+
+    PRIMARY KEY (contract_id)
+);
+
+CREATE INDEX service_node_rewards_contract_id_bls_key_map_pubkey_bls_idx ON service_node_rewards_contract_id_bls_key_map(pubkey_bls);

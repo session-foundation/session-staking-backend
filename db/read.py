@@ -361,3 +361,19 @@ class DBReader:
                 self.log.perf.end("get_events_for_stake_contrat_id")
                 return events
 
+    def get_service_node_rewards_contract_id_bls_key_map(self):
+        self.log.perf.start("get_service_node_rewards_contract_id_bls_key_map")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT contract_id, pubkey_bls FROM service_node_rewards_contract_id_bls_key_map
+                    """
+                )
+                contract_id_map = {
+                    pubkey_bls: contract_id
+                    for contract_id, pubkey_bls in cursor.fetchall()
+                }
+                self.log.debug("Service node rewards contract id bls key map: {}".format(len(contract_id_map)))
+                self.log.perf.end("get_service_node_rewards_contract_id_bls_key_map")
+                return contract_id_map

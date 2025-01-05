@@ -96,15 +96,26 @@ def get_network_info_uncached():
     network_info["median_operator_fee"] = get_median_operator_fee()
     return network_info
 
+def get_next_block_timestamp_est():
+    network_info = get_network_info_cached()
+    return network_info["pulse_target_timestamp"]
+
+def get_network_info_cached():
+    return app.data.get("network_info", getter=get_network_info_uncached)
+
 
 def json_response(vals):
     """
     Takes a dict, adds some general info fields to it, and jsonifies it for a flask route function
     return value.  The dict gets passed through `hexify` first to convert any bytes values to hex.
+
+    Note: because network_info is cached, it can be called earlier in the route and both network_info
+     dict will be the same in both places, and basically guaranteed cached at this stage.
     """
     hexify(vals)
-    network = app.data.get("network_info", getter=get_network_info_uncached)
-    return flask.jsonify({**vals, "network": network, "t": time.time()})
+
+    network_info = get_network_info_cached()
+    return flask.jsonify({**vals, "network": network_info, "t": time.time()})
 
 
 @app.route("/info")
@@ -115,18 +126,19 @@ def get_network_info():
 def get_nodes_cached():
     return app.data.get("nodes", getter=app.db_reader.get_nodes)
 
-
-@app.route("/nodes")
-def get_nodes():
+def get_nodes_response_uncached():
     return json_response({"nodes": get_nodes_cached()})
 
-# TODO: Get from contract
+@app.route("/nodes")
+def route_get_nodes():
+    return app.data.get("nodes_res", getter=get_nodes_response_uncached)
+
 def get_nodes_bls_keys_uncached():
-    return [node.pubkey_bls for node in get_nodes_cached()]
+    return json_response({"bls_keys": app.db_reader.get_service_node_rewards_contract_id_bls_key_map()})
 
 @app.route("/nodes/bls")
-def get_nodes_bls_keys():
-    return json_response({"bls_keys": app.data.get("nodes_bls_keys", getter=get_nodes_bls_keys_uncached)})
+def route_get_nodes_bls_keys():
+    return app.data.get("nodes_bls_keys_res", getter=get_nodes_bls_keys_uncached)
 
 """
 //////////////////////////////////////////////////////////////
@@ -156,7 +168,7 @@ def get_related_stakes_for_eth_address_cached(address: ChecksumAddress):
 # TODO: might make sense to investigate storing contributor and operator addresses in the db as blobs and compare with bytes
 @app.route("/stakes/<eth_wallet:eth_wal>")
 @app.route("/nodes/<eth_wallet:eth_wal>")
-def get_stakes_for_eth_address(eth_wal: str):
+def route_get_stakes_for_eth_address(eth_wal: str):
     try:
         address = eth_format(eth_wal)
         return json_response({"stakes": get_related_stakes_for_eth_address_cached(address), "contracts": get_related_contribution_contracts_for_eth_address_cached(address)})
@@ -172,7 +184,7 @@ def get_stakes_for_eth_address(eth_wal: str):
 
 @app.route("/stakes/<hex64:sn_pubkey>")
 @app.route("/nodes/<hex64:sn_pubkey>")
-def get_stakes_for_sn_pubkey(sn_pubkey: bytes):
+def route_get_stakes_for_sn_pubkey(sn_pubkey: bytes):
     try:
         nodes = get_nodes_cached()
         related_nodes = [node for node in nodes if node.pubkey_ed25519 == sn_pubkey]
@@ -196,32 +208,34 @@ def get_cached_allowed_contract_names():
     return app.data.get(
         "allowed_contract_names",
         getter=get_and_refresh_allowed_contract_names,
-        ttl=config.backend.stale_time_seconds_contract_abis,
+        ttl=config.backend.stale_time_seconds_contract_abis
     )
 
 
 @app.route("/contract/names")
-def get_abi_names():
+def route_get_abi_names():
     return json_response({"names": list(get_cached_allowed_contract_names())})
 
 
 @app.route("/contract/abis")
-def get_abis():
+def route_get_abis():
     return json_response(
-        {"abis": app.data.get("abis", getter=app.db_reader.get_smart_contract_abis)}
+        {"abis": app.data.get("abis_all", getter=app.db_reader.get_smart_contract_abis,
+                              ttl=config.backend.stale_time_seconds_contract_abis)}
     )
 
 
 @app.route("/contract/addresses")
 def get_contract_addresses():
     return json_response(
-        {"addresses": app.data.get("addresses", getter=app.db_reader.get_smart_contract_addresses)}
+        {"addresses": app.data.get("addresses_all", getter=app.db_reader.get_smart_contract_addresses)}
     )
 
 @app.route("/contract/addresses/core")
 def get_contract_addresses_core():
     return json_response(
-        {"addresses": app.data.get("addresses_core", getter=app.db_reader.get_smart_contract_addresses_core)}
+        {"addresses": app.data.get("addresses_core", getter=app.db_reader.get_smart_contract_addresses_core,
+                                   ttl=config.backend.stale_time_seconds_contract_abis)}
     )
 
 def get_contribution_contracts_cached():
@@ -236,8 +250,6 @@ def get_open_contract_details():
 def get_contribution_contract_for_sn_pubkey_uncached(sn_pubkey: bytes):
     cached_contracts = get_contribution_contracts_cached()
     for contract in cached_contracts:
-        print(f"contract.service_node_pubkey: {contract.service_node_pubkey}")
-        print(f"sn_pubkey: {sn_pubkey}")
         if contract.service_node_pubkey == sn_pubkey:
             return contract
     return None
@@ -289,7 +301,8 @@ def get_abi(contract_name: str):
     return json_response(
         {
             "contract": app.data.get(
-                "abi", getter=app.db_reader.get_smart_contract_abi, getter_args=contract_name
+                "abi-{}".format(contract_name), getter=app.db_reader.get_smart_contract_abi, getter_args=contract_name,
+                ttl=config.backend.stale_time_seconds_contract_abis
             )
         }
     )
@@ -303,7 +316,7 @@ def get_contract_address(contract_name: str):
     return json_response(
         {
             "address": app.data.get(
-                "address",
+                "address-{}".format(contract_name),
                 getter=app.db_reader.get_smart_contract_address,
                 getter_args=contract_name,
             )
@@ -350,7 +363,8 @@ def get_stake_events(contract_id: int):
 """
 
 
-def handle_get_exit_and_liquidation(ed25519_pubkey: bytes, liquidate: bool):
+def handle_get_exit_and_liquidation(params: [bytes, bool]):
+    ed25519_pubkey, liquidate = params[0], params[1]
     try:
         response = app.rpc.bls_exit_liquidation_request(ed25519_pubkey, liquidate).get()
         if response is None:
@@ -362,15 +376,18 @@ def handle_get_exit_and_liquidation(ed25519_pubkey: bytes, liquidate: bool):
     except TimeoutError:
         return flask.abort(408)  # Request timeout
 
+def handle_get_exit_and_liquidation_cached(params: [bytes, bool]):
+    return app.data.get(f"exit-{params[0]}-{params[1]}", getter=handle_get_exit_and_liquidation, getter_args=params, invalidate_timestamp=get_next_block_timestamp_est())
+
 
 @app.route("/exit/<hex64:ed25519_pubkey>")
 def get_exit(ed25519_pubkey: bytes):
-    return handle_get_exit_and_liquidation(ed25519_pubkey, liquidate=False)
+    return handle_get_exit_and_liquidation_cached([ed25519_pubkey, False])
 
 
 @app.route("/liquidation/<hex64:ed25519_pubkey>")
 def get_liquidation(ed25519_pubkey: bytes):
-    return handle_get_exit_and_liquidation(ed25519_pubkey, liquidate=True)
+    return handle_get_exit_and_liquidation_cached([ed25519_pubkey, True])
 
 
 def get_exit_liquidation_list_uncached():
@@ -379,7 +396,7 @@ def get_exit_liquidation_list_uncached():
 @app.route("/exit_liquidation_list")
 def get_exit_liquidation_list():
     return json_response(
-        {"result": app.data.get("exit_liquidation_list", getter=get_exit_liquidation_list_uncached)}
+        {"result": app.data.get("exit_liquidation_list", getter=get_exit_liquidation_list_uncached, invalidate_timestamp=get_next_block_timestamp_est())}
     )
 
 
@@ -403,16 +420,14 @@ def get_rewards(eth_wal: str):
 
     if flask.request.method == "GET":
         # We cache all rewards info for all wallets so we don't need to multiple reads in a short period of time
-        rewards_info = app.data.get(f"rewards_info", getter=app.db_reader.get_rewards_info)
+        rewards_info = app.data.get(f"rewards_info", getter=app.db_reader.get_rewards_info, invalidate_timestamp=get_next_block_timestamp_est())
         return json_response({"rewards": rewards_info.get(address, 0)})
 
     if flask.request.method == "POST":
         try:
-            response = app.data.get(f"rewards-sig-{address}", getter=get_rewards_signature_uncached, getter_args=address)
-            if "status" in response:
-                response.pop("status")
-            if "address" in response:
-                response.pop("address")
+            response = app.data.get(f"rewards-sig-{address}", getter=get_rewards_signature_uncached, getter_args=address, invalidate_timestamp=get_next_block_timestamp_est())
+            response.pop("status") if "status" in response else None
+            response.pop("address") if "address" in response else None
             return json_response({"rewards": response})
         except ValueError as e:
             return flask.abort(400, str(e))
@@ -480,7 +495,7 @@ def sn_pubkey_registrations(sn_pubkey: bytes) -> flask.Response:
     result = json_response(
         {
             "registrations": app.data.get(
-                f"sn-{sn_pubkey}",
+                f"registration-sn-{sn_pubkey}",
                 getter=app.db_reader_registrations.get_registrations_by_pubkey,
                 getter_args=sn_pubkey,
             )
@@ -497,7 +512,7 @@ bootstrap()
 
 if config.backend.rpc_api_usage_logging:
     def log_rpc_usage(signum):
-        app.rpc.usage_tracker.log_usage("Logging RPC usage for {}".format(signum))
+        app.rpc.usage_tracker.log_usage(" For signum {}".format(signum))
         app.rpc.usage_tracker.write_failure_reasons_to_file(f"rpc-usage-failure-reasons-{signum}.txt")
 
     @timer(config.backend.rpc_api_usage_logging_interval, target="worker1")

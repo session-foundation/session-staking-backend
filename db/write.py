@@ -696,3 +696,42 @@ class DBWriter:
 
             connection.commit()
             self.log.perf.end("write_arbitrum_info_to_db")
+
+    def write_service_node_rewards_contract_id_bls_key_map(self, contract_id_map: dict[str, str]):
+        self.log.perf.start("write_service_node_rewards_contract_id_bls_key_map")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug("Inserting {} service node rewards contract ids".format(len(contract_id_map)))
+                self.log.perf.start("write_service_node_rewards_contract_id_bls_key_map -> insert contract ids")
+
+                cursor.execute("DELETE FROM service_node_rewards_contract_id_bls_key_map")
+
+                cursor.executemany(
+                    """
+                    INSERT INTO service_node_rewards_contract_id_bls_key_map (
+                        contract_id,
+                        pubkey_bls
+                    )
+                    VALUES (?, ?)
+                    """,
+                    (
+                        (
+                            int(contract_id),
+                            pubkey_bls,
+                        )
+                        for pubkey_bls, contract_id in contract_id_map.items()
+                    ),
+                )
+
+                inserted_contract_id_rows = cursor.rowcount
+
+                self.log.perf.end("write_service_node_rewards_contract_id_bls_key_map -> insert contract ids")
+                self.log.debug(
+                    "Inserted {} rows into service_node_rewards_contract_id_bls_key_map".format(
+                        inserted_contract_id_rows
+                    )
+                )
+
+            connection.commit()
+            self.log.perf.end("write_service_node_rewards_contract_id_bls_key_map")

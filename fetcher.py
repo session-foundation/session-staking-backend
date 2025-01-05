@@ -296,6 +296,21 @@ class App:
         self.log.info("Scheduled task finish")
         self.log.perf.end("scheduled_task")
 
+    def fetch_service_node_rewards_contract_id_bls_key_map(self):
+        self.log.perf.start("fetch_service_node_rewards_contract_id_bls_key_map")
+        contract_id_map = {}
+        try:
+            contract_id_map = get_service_node_rewards_contract_id_map(self.service_node_rewards)
+            self.log.debug(
+                "Found {} service node rewards contract ids".format(len(contract_id_map))
+            )
+        except Exception as e:
+            self.log.error("Error fetching and parsing service node rewards contract id bls key map")
+            self.log.exception(e)
+        finally:
+            self.log.perf.end("fetch_service_node_rewards_contract_id_bls_key_map")
+            return contract_id_map
+
     def fetch_service_node_list(self):
         self.log.perf.start("fetch_service_node_list")
         current_height = None
@@ -312,7 +327,7 @@ class App:
             self.log.debug("Fetched {} service nodes".format(len(nodes)))
 
             # TODO: remove once contract_id is available via rpc.get_service_nodes
-            contract_id_map = get_service_node_rewards_contract_id_map(self.service_node_rewards)
+            contract_id_map = self.db_reader.get_service_node_rewards_contract_id_bls_key_map()
 
             for node in nodes:
                 pubkey_bls = None
@@ -483,6 +498,9 @@ class App:
             last_event_block_height = self.db_reader.get_last_fetched_arbitrum_event_block_height()
             current_block = self.web3_client.web3.eth.block_number
             end_block = current_block - 1
+
+            contract_id_map = self.fetch_service_node_rewards_contract_id_bls_key_map()
+            self.db_writer.write_service_node_rewards_contract_id_bls_key_map(contract_id_map)
 
             service_node_rewards_balance = self.token_contract.balance_of(self.service_node_rewards.contract_address)
             reward_rate_pool_balance = self.token_contract.balance_of(self.reward_rate_pool.contract_address)
