@@ -51,15 +51,20 @@ class RPCUsageTracker:
         self.log = log
         if enabled:
             self.log.warning("RPC usage tracking enabled. This is not recommended for production use.")
+            self.uses_executed = {}
             self.uses_success = {}
             self.uses_failed = {}
             self.uses_cached = {}
+            self.fail_reasons = {}
+
+            self.add_executed = self.add_executed_enabled
             self.add_success = self.add_success_enabled
             self.add_failed = self.add_failed_enabled
             self.add_cached = self.add_cached_enabled
             self.log_usage = self.log_usage_enabled
 
         else:
+            self.add_executed = self._noop
             self.add_success = self._noop
             self.add_failed = self._noop
             self.add_cached = self._noop
@@ -68,18 +73,28 @@ class RPCUsageTracker:
     def _noop(self, *args, **kwargs):
         pass
 
+    def add_executed_enabled(self, endpoint: str):
+        if endpoint not in self.uses_executed:
+            self.uses_executed[endpoint] = 0
+        self.uses_executed[endpoint] += 1
+
     def add_success_enabled(self, endpoint: str):
         self.uses_success.setdefault(endpoint, []).append(datetime.now().timestamp())
 
-    def add_failed_enabled(self, endpoint: str):
+    def add_failed_enabled(self, endpoint: str, reason: str):
         self.uses_failed.setdefault(endpoint, []).append(datetime.now().timestamp())
+        self.fail_reasons.setdefault(endpoint, []).append(reason)
 
     def add_cached_enabled(self, endpoint: str):
         self.uses_cached.setdefault(endpoint, []).append(datetime.now().timestamp())
 
     def log_usage_enabled(self, msg: str = ""):
-        msg += "\nRPC usage tracking: (s/f/c {}/{}/{})\n".format(len(self.uses_success), len(self.uses_failed), len(self.uses_cached))
         unique_endpoints: dict[str, dict[str, list[float]]] = {}
+
+        g_executed = 0
+        g_successes = 0
+        g_failures = 0
+        g_cached = 0
 
         for endpoint, timestamps in self.uses_success.items():
             unique_endpoints.setdefault(endpoint, {"success": [], "failed": [], "cached": []})
@@ -103,9 +118,34 @@ class RPCUsageTracker:
             total_failure = len(stats_failed)
             total_cached = len(stats_cached)
 
-            total = total_success + total_failure + total_cached
-            if total == 0:
+
+            g_successes += total_success
+            g_failures += total_failure
+            g_cached += total_cached
+
+            total_executed = self.uses_executed.get(endpoint, 0)
+            g_executed += total_executed
+
+            total_completed = total_success + total_failure + total_cached
+            if total_completed == 0:
                 continue
+
+            success_rate = total_success / total_completed
+            failure_rate = total_failure / total_completed
+            cache_rate = total_cached / total_completed
+
+            fail_reasons = self.fail_reasons.get(endpoint, [])
+
+            fail_timeout = 0
+            fail_other = 0
+            for reason in fail_reasons:
+                if reason == "Timeout":
+                    fail_timeout += 1
+                else:
+                    fail_other += 1
+
+            fail_timeout_rate = fail_timeout / total_failure if total_failure > 0 else 0
+            fail_other_rate = fail_other / total_failure if total_failure > 0 else 0
 
             timestamps_all = stats_success + stats_failed + stats_cached
             timestamps_all.sort()
@@ -120,7 +160,7 @@ class RPCUsageTracker:
             current_time = datetime.now().timestamp()
 
             # ---- 1. Average RPS over all time ----
-            rps_avg = total / total_time_seconds
+            rps_avg = total_completed / total_time_seconds
 
             # ---- 2. Average RPS in the last hour ----
             one_hour_ago = current_time - 3600
@@ -146,12 +186,14 @@ class RPCUsageTracker:
             (h_10m_sec, rps_peak_time_10m_sec, rps_peak_10m_sec) = bin_histogram_timestamps(last_10m_timestamps, bin_size_seconds=1)
             (h_10m_min, rps_peak_time_10m_min, rps_peak_10m_min) = bin_histogram_timestamps(last_10m_timestamps, bin_size_seconds=60)
 
-            log_lines.append(f"{endpoint} | Total: {total} ({total_success} success, {total_failure} failure, {total_cached} cached)")
+            log_lines.append(f"\n{endpoint} | {total_executed} executed | {total_completed} completed ({success_rate:.2%} success ({total_success}) | {failure_rate:.2%} failure ({total_failure}) | {cache_rate:.2%} cached ({total_cached}))")
+            log_lines.append(f"Timeout failures:  {fail_timeout_rate:.2%} of failures ({fail_timeout} / {total_failure}))")
+            log_lines.append(f"Other failures:  {fail_other_rate:.2%} of failures ({fail_other} / {total_failure}))")
 
             stats = [
                 ["Period", "#", "RPS", "Peak RPS (1s bin)", "Peak RPS Time (1s bin)", "Peak RPS (1m bin)",
                  "Peak RPS Time (1m bin)"],
-                [f"Life ({total_time_seconds:.0f}s)", f"{total}", f"{rps_avg:.2f}", "", "", "", ""],
+                [f"Life ({total_time_seconds:.0f}s)", f"{total_completed}", f"{rps_avg:.2f}", "", "", "", ""],
                 [f"< 1h", len(last_hour_timestamps), f"{rps_avg_last_hour:.2f}", f"{rps_peak_1h_sec:.2f}",
                  rps_peak_time_1h_sec, f"{rps_peak_1h_min:.2f}", rps_peak_time_1h_min],
                 [f"< 10m", len(last_10m_timestamps), f"{rps_avg_last_10_minutes:.2f}", f"{rps_peak_10m_sec:.2f}",
@@ -163,7 +205,21 @@ class RPCUsageTracker:
             # self.log.info(f"  Requests in past {total} ({total_success} success, {total_failure} failure, {total_cached} cached)")
             # self.log.info(f"  Avg requests per second: {rps_avg:.2f} avg (last hour: {rps_avg_last_hour:.2f}, last 10m: {rps_avg_last_10_minutes:.2f})")
             msg += ("\n".join(log_lines))
-        self.log.info(msg)
+
+        g_completed = g_successes + g_failures + g_cached
+        g_success_rate = g_successes / g_completed if g_completed > 0 else 0
+        g_failure_rate = g_failures / g_completed if g_completed > 0 else 0
+        g_cache_rate = g_cached / g_completed if g_completed > 0 else 0
+
+        header_msg = f"\nRPC usage tracking | {g_executed} executed | {g_completed} completed ({g_success_rate:.2%} success ({g_successes}) | {g_failure_rate:.2%} failure ({g_failures}) | {g_cache_rate:.2%} cached ({g_cached}))"
+        self.log.info(header_msg + msg)
+
+    def write_failure_reasons_to_file(self, filename: str):
+        with open(filename, "w") as f:
+            for endpoint, timestamps in self.fail_reasons.items():
+                f.write(f"{endpoint}\n")
+                for reason in timestamps:
+                    f.write(f"  {reason}\n")
 
 omq, oxend = None, None
 
@@ -244,12 +300,12 @@ class FutureJSON:
         """If the result is already available, returns it immediately (and can safely be called multiple times.
         Otherwise waits for the result, parses as json, and caches it.  Returns None if the request fails
         """
+        self.rpc_usage_tracker.add_executed(self.endpoint)
         if self.json is None and self.future is not None:
             try:
                 result = self.future.get()
                 self.future = None
                 if result[0] != b"200":
-                    self.rpc_usage_tracker.add_failed(self.endpoint)
                     raise RuntimeError(
                         "Request for {} failed: got {}".format(self.endpoint, result)
                     )
@@ -265,6 +321,19 @@ class FutureJSON:
                 if not self.fail_okay:
                     print("Something getting wrong: {}".format(e), file=sys.stderr)
                 self.future = None
+                self.rpc_usage_tracker.add_failed(self.endpoint, e)
+
+            except TimeoutError as e:
+                if not self.fail_okay:
+                    print("Timeout: {}".format(e), file=sys.stderr)
+                self.future = None
+                self.rpc_usage_tracker.add_failed(self.endpoint, "Timeout")
+
+            except Exception as e:
+                if not self.fail_okay:
+                    print("Something getting wrong: {}".format(e), file=sys.stderr)
+                self.future = None
+                self.rpc_usage_tracker.add_failed(self.endpoint, e)
         else:
             self.rpc_usage_tracker.add_cached(self.endpoint)
 

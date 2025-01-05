@@ -215,6 +215,7 @@ class App:
                     self.log.perf.end("loop")
                     self.time_keeper.log_time_keeper()
                     self.rpc.usage_tracker.log_usage()
+                    self.rpc.usage_tracker.write_failure_reasons_to_file(f"rpc-usage-failure-reasons-fetcher.txt")
 
                     now = time.time()
                     arb_next_update = (

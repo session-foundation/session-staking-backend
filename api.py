@@ -482,6 +482,7 @@ bootstrap()
 if config.backend.rpc_api_usage_logging:
     def log_rpc_usage(signum):
         app.rpc.usage_tracker.log_usage("Logging RPC usage for {}".format(signum))
+        app.rpc.usage_tracker.write_failure_reasons_to_file(f"rpc-usage-failure-reasons-{signum}.txt")
 
     @timer(config.backend.rpc_api_usage_logging_interval, target="worker1")
     def log_rpc_usage_w1(signum):
