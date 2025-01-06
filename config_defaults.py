@@ -70,6 +70,14 @@ class Backend:
     web3_private_key:       str | None = None
     web3_provider_urls:      list[str] = ["http://localhost:8545"]  # Default hardhat private chain node address)
 
+    """
+    SNAPSHOT CONFIG
+    """
+    snapshot_task_name:                    str = "snapshot"
+    sqlite_db_snapshot:                    str = "static/backend-snapshot.db"
+    sqlite_snapshot_time_interval_seconds: int = 600
+    snapshot_on_startup:                  bool = False
+
 
 # Session mainnet contracts
 mainnet_backend = Backend()
