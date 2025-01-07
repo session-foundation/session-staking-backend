@@ -7,6 +7,8 @@ import eth_utils
 import subprocess
 from eth_typing import ChecksumAddress
 from uwsgidecorators import timer
+from werkzeug.exceptions import GatewayTimeout
+
 import config
 from db.read import DBReader
 from log import Log
@@ -235,7 +237,7 @@ def get_contract_addresses():
 def get_contract_addresses_core():
     return json_response(
         {"addresses": app.data.get("addresses_core", getter=app.db_reader.get_smart_contract_addresses_core,
-                                   ttl=config.backend.stale_time_seconds_contract_abis)}
+                                   ttl=config.backend.stale_time_seconds_contract_abis )}
     )
 
 def get_contribution_contracts_cached():
@@ -365,40 +367,65 @@ def get_stake_events(contract_id: int):
 
 def handle_get_exit_and_liquidation(params: [bytes, bool]):
     ed25519_pubkey, liquidate = params[0], params[1]
-    try:
-        response = app.rpc.bls_exit_liquidation_request(ed25519_pubkey, liquidate).get()
-        if response is None:
-            return flask.abort(504)  # Gateway timeout
-        if "status" in response:
-            response.pop("status")
-        result = json_response({"result": response})
-        return result
-    except TimeoutError:
-        return flask.abort(408)  # Request timeout
+    if ed25519_pubkey not in get_exitable_ed25519_keys_cached():
+        return flask.abort(404, f"No exit available for {ed25519_pubkey.hex()}")
+
+    response = app.rpc.bls_exit_liquidation_request(ed25519_pubkey, liquidate).get()
+    if response is None:
+        raise GatewayTimeout("Failed to get exit signature")
+    if "status" in response:
+        response.pop("status")
+
+    return json_response({"result": response})
+
 
 def handle_get_exit_and_liquidation_cached(params: [bytes, bool]):
-    return app.data.get(f"exit-{params[0]}-{params[1]}", getter=handle_get_exit_and_liquidation, getter_args=params, invalidate_timestamp=get_next_block_timestamp_est())
+    try:
+        return app.data.get(f"exit-{params[0]}-{params[1]}", getter=handle_get_exit_and_liquidation, getter_args=params,
+                            invalidate_timestamp=get_next_block_timestamp_est())
+    except GatewayTimeout as e:
+        app.logger.error(f"Exception: {e}")
+        return flask.abort(504)  # Gateway timeout
+    except TimeoutError:
+        return flask.abort(408)  # Request timeout
+    except Exception as e:
+        app.logger.error(f"Exception: {e}")
+        return flask.abort(500, e)
 
 
 @app.route("/exit/<hex64:ed25519_pubkey>")
-def get_exit(ed25519_pubkey: bytes):
+def route_get_exit(ed25519_pubkey: bytes):
     return handle_get_exit_and_liquidation_cached([ed25519_pubkey, False])
 
 
 @app.route("/liquidation/<hex64:ed25519_pubkey>")
-def get_liquidation(ed25519_pubkey: bytes):
+def route_get_liquidation(ed25519_pubkey: bytes):
     return handle_get_exit_and_liquidation_cached([ed25519_pubkey, True])
 
 
 def get_exit_liquidation_list_uncached():
     return app.rpc.bls_exit_liquidation_list().get()
 
+
+def get_exit_liquidation_list_cached():
+    return app.data.get("exit_liquidation_list", getter=get_exit_liquidation_list_uncached,
+                        invalidate_timestamp=get_next_block_timestamp_est())
+
+
 @app.route("/exit_liquidation_list")
-def get_exit_liquidation_list():
+def route_get_exit_liquidation_list():
     return json_response(
-        {"result": app.data.get("exit_liquidation_list", getter=get_exit_liquidation_list_uncached, invalidate_timestamp=get_next_block_timestamp_est())}
+        {"result": get_exit_liquidation_list_cached()}
     )
 
+
+def get_exitable_ed25519_keys_uncached():
+    return set([bytes.fromhex(x.get("service_node_pubkey")) for x in get_exit_liquidation_list_cached()])
+
+
+def get_exitable_ed25519_keys_cached():
+    return app.data.get("exitable_ed25519_keys", getter=get_exitable_ed25519_keys_uncached,
+                        invalidate_timestamp=get_next_block_timestamp_est())
 
 """
 //////////////////////////////////////////////////////////////
@@ -408,31 +435,61 @@ def get_exit_liquidation_list():
 //////////////////////////////////////////////////////////////
 """
 
-def get_rewards_signature_uncached(address: ChecksumAddress):
+
+def get_rewards_signature_uncached(eth_wal: str):
+    address = eth_format(eth_wal)
     response = app.rpc.bls_rewards_request(address).get()
     if response is None:
         raise TimeoutError("Failed to get rewards signature")
+
+    response.pop("status") if "status" in response else None
+    response.pop("address") if "address" in response else None
+
     return response
+
+
+def get_rewards_info_cached():
+    # We cache all rewards info for all wallets so we don't need to multiple reads in a short period of time
+    return app.data.get(f"rewards_info", getter=app.db_reader.get_rewards_info,
+                        invalidate_timestamp=get_next_block_timestamp_est())
+
+
+def get_rewards_info_for_address_cached(eth_wal: str):
+    address = eth_format(eth_wal)
+    rewards_info = get_rewards_info_cached()
+    return rewards_info.get(address, 0)
+
+
+def get_rewards_info_response(eth_wal: str):
+    return json_response({"rewards": get_rewards_info_for_address_cached(eth_wal)})
+
+
+def get_rewards_signature_response(eth_wal: str):
+    try:
+        rewards = get_rewards_info_for_address_cached(eth_wal)
+        if rewards == 0:
+            return flask.abort(404, f"No rewards available for {eth_wal}")
+
+        return json_response({"rewards": app.data.get(f"rewards-sig-{eth_wal}", getter=get_rewards_signature_uncached,
+                                                      getter_args=eth_wal,
+                                                      invalidate_timestamp=get_next_block_timestamp_est())})
+    except ValueError as e:
+        return flask.abort(400, str(e))
+
 
 @app.route("/rewards/<eth_wallet:eth_wal>", methods=["GET", "POST"])
 def get_rewards(eth_wal: str):
-    address = eth_format(eth_wal)
-
     if flask.request.method == "GET":
-        # We cache all rewards info for all wallets so we don't need to multiple reads in a short period of time
-        rewards_info = app.data.get(f"rewards_info", getter=app.db_reader.get_rewards_info, invalidate_timestamp=get_next_block_timestamp_est())
-        return json_response({"rewards": rewards_info.get(address, 0)})
+        return app.data.get(f"rewards-info-response-{eth_wal}", getter=get_rewards_info_response, getter_args=eth_wal,
+                            invalidate_timestamp=get_next_block_timestamp_est())
 
     if flask.request.method == "POST":
         try:
-            response = app.data.get(f"rewards-sig-{address}", getter=get_rewards_signature_uncached, getter_args=address, invalidate_timestamp=get_next_block_timestamp_est())
-            response.pop("status") if "status" in response else None
-            response.pop("address") if "address" in response else None
-            return json_response({"rewards": response})
-        except ValueError as e:
-            return flask.abort(400, str(e))
+            return app.data.get(f"rewards-sig-response-{eth_wal}", getter=get_rewards_signature_response,
+                                getter_args=eth_wal, invalidate_timestamp=get_next_block_timestamp_est())
         except TimeoutError:
-            return flask.abort(408)  # Request timeout
+            # We don't want to cache a 408 response
+            return flask.abort(408)
 
     return flask.abort(405)  # Method not allowed
 
