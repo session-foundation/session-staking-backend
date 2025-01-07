@@ -274,6 +274,8 @@ class FutureJSON:
         timeout=10,
         rpc_usage_tracker: RPCUsageTracker = RPCUsageTracker(False, None),
     ):
+        if timeout is None:
+            timeout = 10
         self.endpoint = endpoint
         self.cache_key = self.endpoint + cache_key
         self.fail_okay = fail_okay
@@ -291,7 +293,7 @@ class FutureJSON:
             self.json = None
             self.args = args
             self.future = omq.request_future(
-                oxend, self.endpoint, [] if self.args is None else [self.args], timeout=timeout
+                oxend, self.endpoint, [] if self.args is None else [self.args], request_timeout=timedelta(seconds=timeout)
             )
         self.cache_seconds = cache_seconds
         self.rpc_usage_tracker = rpc_usage_tracker
