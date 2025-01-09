@@ -138,12 +138,14 @@ def get_nodes_response_uncached():
 def route_get_nodes():
     return app.data.get("nodes_res", getter=get_nodes_response_uncached)
 
-def get_nodes_bls_keys_uncached():
-    return json_response({"bls_keys": app.db_reader.get_service_node_rewards_contract_id_bls_key_map()})
+
+def get_nodes_bls_keys_cached():
+    return app.data.get("contract_node_bls_keys_added", getter=app.db_reader.get_service_node_rewards_contract_id_bls_key_map)
+
 
 @app.route("/nodes/bls")
 def route_get_nodes_bls_keys():
-    return app.data.get("nodes_bls_keys_res", getter=get_nodes_bls_keys_uncached)
+    return json_response({"bls_keys": get_nodes_bls_keys_cached()})
 
 """
 //////////////////////////////////////////////////////////////
@@ -176,7 +178,7 @@ def get_related_stakes_for_eth_address_cached(address: ChecksumAddress):
 def route_get_stakes_for_eth_address(eth_wal: str):
     try:
         address = eth_format(eth_wal)
-        return json_response({"stakes": get_related_stakes_for_eth_address_cached(address), "contracts": get_related_contribution_contracts_for_eth_address_cached(address)})
+        return json_response({"stakes": get_related_stakes_for_eth_address_cached(address), "contracts": get_related_contribution_contracts_for_eth_address_cached(address), "added_bls_keys": get_nodes_bls_keys_cached()})
 
     except ValueError as e:
         app.logger.error(f"Exception: {e}")
@@ -249,7 +251,7 @@ def get_contribution_contracts_cached():
 @app.route("/contract/contribution")
 def get_open_contract_details():
     return json_response(
-        {"contracts": get_contribution_contracts_cached()}
+        {"contracts": get_contribution_contracts_cached(), "added_bls_keys": get_nodes_bls_keys_cached()}
     )
 
 def get_contribution_contract_for_sn_pubkey_uncached(sn_pubkey: bytes):
