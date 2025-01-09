@@ -92,14 +92,15 @@ def get_median_operator_fee():
 
 def get_network_info_uncached():
     network_info = app.db_reader.get_network_info()
+    arbitrum_info = app.db_reader.get_arbitrum_info()
     if network_info is None:
         return None
     network_info = dataclasses.asdict(network_info)
     network_info["median_operator_fee"] = get_median_operator_fee()
-    return network_info
+    return network_info, arbitrum_info
 
 def get_next_block_timestamp_est():
-    network_info = get_network_info_cached()
+    network_info, arbitrum_info = get_network_info_cached()
     return network_info["pulse_target_timestamp"]
 
 def get_network_info_cached():
@@ -116,7 +117,9 @@ def json_response(vals):
     """
     hexify(vals)
 
-    network_info = get_network_info_cached()
+    network_info, arbitrum_info = get_network_info_cached()
+    network_info["l2_height"] = arbitrum_info.block
+    network_info["l2_height_timestamp"] = arbitrum_info.timestamp
     return flask.jsonify({**vals, "network": network_info, "t": time.time()})
 
 
