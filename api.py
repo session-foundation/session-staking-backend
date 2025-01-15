@@ -87,7 +87,7 @@ app.url_map.converters["eth_wallet"] = EthConverter
 def get_median_operator_fee():
     # remove nodes that only have a single contributor
     nodes = [n for n in get_nodes_cached() if len(n.contributors) > 1]
-    return statistics.median([n.operator_fee for n in nodes])
+    return statistics.median([n.operator_fee for n in nodes]) if len(nodes) > 0 else 0
 
 
 def get_network_info_uncached():
