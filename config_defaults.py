@@ -1,4 +1,4 @@
-# Default configuration options for SENT staking website backend.
+# Default configuration options for the session token staking website backend.
 #
 # To override settings add `config.whatever = ...` into `config.py`; this file should not be
 # modified and simply contains the default values.
@@ -23,7 +23,7 @@ class Backend:
     log_level                           = logging.INFO
     log_level_generic                   = None  # Logs from other packages will use log_level if this is not set
     oxen_wallet_regex:              str = ""
-    sqlite_db:                      str = "sent-backend.db"
+    sqlite_db:                      str = "ssb.db"
     sqlite_schema:                  str = "db/schema.sql"
     rpc_shared:               list[str] = ""
     rpc_shared_cache:               int = 2
@@ -42,7 +42,7 @@ class Backend:
     registration_api_name:          str = "registration_api"
     # NOTE: This can be the same DB as the main API, but you must manually run the registrations/schema.sql script in
     #   the main db so it can be populated with the required tables.
-    registration_sqlite_db:         str = "sent-backend-registrations.db"
+    registration_sqlite_db:         str = "ssb-registrations.db"
     registration_sqlite_schema:     str = "registration/schema.sql"
 
     """
@@ -52,7 +52,7 @@ class Backend:
     # Arbitrum runs at ~4 blocks per second, and the rpc node has a limit of 30m, so scan for 120 blocks
     arbitrum_rescan_safety_blocks: int = 120
     addr_reward_rate_pool:         str = "0x0000000000000000000000000000000000000000"
-    addr_sent:                     str = "0x0000000000000000000000000000000000000000"
+    addr_token:                    str = "0x0000000000000000000000000000000000000000"
     addr_sn_contrib:               str = "0x0000000000000000000000000000000000000000"
     addr_sn_contrib_factory:       str = "0x0000000000000000000000000000000000000000"
     addr_sn_rewards:               str = "0x0000000000000000000000000000000000000000"
@@ -104,14 +104,14 @@ devnet_backend.web3_provider_urls        = ["https://sepolia-rollup.arbitrum.io/
 
 # Session stagenet.v3 contracts
 stagenet_backend = Backend()
-stagenet_backend.addr_reward_rate_pool = "0x38cD8D3F93d591C18cf26B3Be4CB2c872aC37953"
-stagenet_backend.addr_sent             = "0x70c1f36C9cEBCa51B9344121D284D85BE36CD6bB"
-stagenet_backend.addr_sn_contrib_factory = "0x66d0D4f71267b3150DafF7bD486AC5E097E7E4C6"
-stagenet_backend.addr_sn_rewards       = "0x4abfFB7f922767f22c7aa6524823d93FDDaB54b1"
-stagenet_backend.oxen_wallet_regex     = f"ST[{B58_ALPHABET}]{{95}}"
-stagenet_backend.rpc_shared            = "tcp://localhost:6786"
-stagenet_backend.sqlite_db             = "ssb-stagenet.db"
 stagenet_backend.web3_provider_urls     = ["http://10.24.0.2/arb_sepolia"]
+stagenet_backend.addr_reward_rate_pool   = "0xaAD853fE7091728dac0DAa7b69990ee68abFC636"
+stagenet_backend.addr_token              = "0x7D7fD4E91834A96cD9Fb2369E7f4EB72383bbdEd"
+stagenet_backend.addr_sn_contrib_factory = "0x36Ee2Da54a7E727cC996A441826BBEdda6336B71"
+stagenet_backend.addr_sn_rewards         = "0x9d8aB00880CBBdc2Dcd29C179779469A82E7be35"
+stagenet_backend.oxen_wallet_regex       = f"ST[{B58_ALPHABET}]{{95}}"
+stagenet_backend.rpc_shared              = "tcp://localhost:6786"
+stagenet_backend.sqlite_db               = "ssb-stagenet.db"
 
 # Assign the active backend to be used in the sent-staking-backend
 backend = stagenet_backend

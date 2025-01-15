@@ -98,6 +98,9 @@ def get_network_info():
 //////////////////////////////////////////////////////////////
 """
 
+# NOTE: the /api prefix route here is to allow for local testing
+
+@app.route("/api/store/<hex64:sn_pubkey>", methods=["GET", "POST"])
 @app.route("/registrations/<hex64:sn_pubkey>", methods=["POST"])
 @app.route("/store/<hex64:sn_pubkey>", methods=["GET", "POST"])
 def store_registration(sn_pubkey: bytes):
@@ -143,3 +146,4 @@ def store_registration(sn_pubkey: bytes):
     )
 
     return json_response({"success": True, "registration": params})
+

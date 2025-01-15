@@ -45,7 +45,7 @@ def validate_config(conf: config):
 
     # Assert all contract addresses are valid
     valid_address_assertion(conf.backend.addr_sn_contrib, "addr_sn_contrib")
-    valid_address_assertion(conf.backend.addr_sent, "addr_sent")
+    valid_address_assertion(conf.backend.addr_token, "addr_sent")
     valid_address_assertion(conf.backend.addr_sn_rewards, "addr_sn_rewards")
     valid_address_assertion(conf.backend.addr_reward_rate_pool, "addr_reward_rate_pool")
 

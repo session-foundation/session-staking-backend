@@ -484,7 +484,7 @@ class DBWriter:
             self.log.perf.end("write_arbitrum_events_to_db")
 
     def write_contribution_contracts_to_db(
-        self, contracts: list[ContributionContractDetails], contributions_list: list, recent_add_node_event_timestamps: dict[str, int]
+        self, contracts: list[ContributionContractDetails], contributions_list: list, add_event_timestamps: dict[str, int]
     ):
         self.log.perf.start("write_contribution_contracts_to_db")
 
@@ -513,7 +513,7 @@ class DBWriter:
                         (
                             contract.address,
                             contract.fee,
-                            recent_add_node_event_timestamps.get(contract.pubkey_bls),
+                            add_event_timestamps.get(contract.pubkey_bls),
                             contract.operator_address,
                             contract.pubkey_bls,
                             contract.service_node_pubkey,

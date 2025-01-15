@@ -33,7 +33,7 @@ from web3client.contracts.service_node_contribution_factory import (
     ServiceNodeContributionFactory,
 )
 from web3client.contracts.service_node_rewards import ServiceNodeRewardsInterface
-from web3client.contracts.sent import SENTInterface
+from web3client.contracts.token import TokenInterface
 from oxen.omq import omq_connection
 
 
@@ -97,7 +97,8 @@ class App:
 
         self.arbitrum_details_last_updated = 0
 
-        self.arbitrum_node_add_events_bls_key_to_timestamp_map = {}
+        # looks like { pubkey_bls : { add: [], exit: []}}
+        self.arbitrum_node_events_bls_key_to_events_timestamps_map: dict[str, dict[str, list[int]]] = {}
 
         self.web3_client = Web3Client(
             provider_urls=config.backend.web3_provider_urls,
@@ -107,8 +108,10 @@ class App:
             abi_manager=ABIManager(db_writer=self.db_writer, abi_dir=config.backend.abi_dir),
         )
 
-        self.token_contract = SENTInterface(
-            web3_client=self.web3_client, contract_address=config.backend.addr_sent
+        self.log.info(f"Using contract addresses:\n Token: {config.backend.addr_token}\n SN Rewards: {config.backend.addr_sn_rewards}\n Reward Rate Pool: {config.backend.addr_reward_rate_pool}")
+
+        self.token_contract = TokenInterface(
+            web3_client=self.web3_client, contract_address=config.backend.addr_token
         )
         self.service_node_rewards = ServiceNodeRewardsInterface(
             web3_client=self.web3_client,
@@ -547,10 +550,9 @@ class App:
                     self.web3_client, self.log, contrib_contract_list
                 )
 
-                recent_add_node_event_timestamps = self.get_arbitrum_node_add_events_since_last_update()
-
+                node_add_timestamps = self.update_arbitrum_node_event_timestamps()
                 self.db_writer.write_contribution_contracts_to_db(
-                    contract_details_list, contributions_list, recent_add_node_event_timestamps
+                    contract_details_list, contributions_list, node_add_timestamps
                 )
             else:
                 self.log.info("No contribution contracts to write to db")
@@ -562,14 +564,24 @@ class App:
             self.log.error("Error fetching and parsing arbitrum details")
             self.log.exception(e)
 
-    def get_arbitrum_node_add_events_since_last_update(self):
-        recent_add_node_events = self.db_reader.get_arbitrum_events_since_timestamp([self.arbitrum_details_last_updated, ['NewServiceNodeV2']])
-        for event in recent_add_node_events:
-            pubkey_bls_encoded = event.args.get("pubkey")
-            pubkey_bls = parse_bls_pubkey((pubkey_bls_encoded["X"], pubkey_bls_encoded["Y"]))
-            self.arbitrum_node_add_events_bls_key_to_timestamp_map["0x{}".format(pubkey_bls)] = event.timestamp
 
-        return self.arbitrum_node_add_events_bls_key_to_timestamp_map
+    def update_arbitrum_node_event_timestamps(self):
+        recent_node_events = self.db_reader.get_arbitrum_events_since_timestamp([self.arbitrum_details_last_updated, ['NewServiceNodeV2', 'ServiceNodeExit', 'ServiceNodeLiquidated']])
+        for event in recent_node_events:
+            pubkey_bls_encoded = event.args.get("pubkey")
+            pubkey_bls = "0x{}".format(parse_bls_pubkey((pubkey_bls_encoded["X"], pubkey_bls_encoded["Y"])))
+            if event.name == "NewServiceNodeV2":
+                self.arbitrum_node_events_bls_key_to_events_timestamps_map.setdefault(pubkey_bls, {}).setdefault("add", []).append(event.timestamp)
+            elif event.name == "ServiceNodeExit" or event.name == "ServiceNodeLiquidated":
+                self.arbitrum_node_events_bls_key_to_events_timestamps_map.setdefault(pubkey_bls, {}).setdefault("exit", []).append(event.timestamp)
+
+        node_add_timestamps = {}
+        for pubkey_bls, event_timestamps in self.arbitrum_node_events_bls_key_to_events_timestamps_map.items():
+            add_events = event_timestamps.get("add", [])
+            exit_events = event_timestamps.get("exit", [])
+            node_add_timestamps[pubkey_bls] = max(add_events) if len(add_events) > 0 and len(add_events) > len(exit_events) else None
+
+        return node_add_timestamps
 
 
 app = App(config.backend.fetcher_name if config.backend.fetcher_name else __name__)

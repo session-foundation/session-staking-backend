@@ -2,11 +2,11 @@ from web3client.client import Web3Client
 from web3client.contracts.contract import ContractInterface
 
 
-class SENTInterface(ContractInterface):
-    abi_name = "SENT"
+class TokenInterface(ContractInterface):
+    abi_name = "Token"
 
     def __init__(self, web3_client: Web3Client, contract_address: str):
-        super().__init__(web3_client, contract_address, SENTInterface.abi_name)
+        super().__init__(web3_client, contract_address, TokenInterface.abi_name)
 
     def transfer(self, amount: int, address_to: str):
         """
