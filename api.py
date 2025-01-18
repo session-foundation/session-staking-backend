@@ -104,7 +104,7 @@ def get_next_block_timestamp_est():
     return network_info["pulse_target_timestamp"]
 
 def get_network_info_cached():
-    return app.data.get("network_info", getter=get_network_info_uncached)
+    return app.data.get("network_info", getter=get_network_info_uncached, ttl=1)
 
 
 def json_response(vals):
