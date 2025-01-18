@@ -95,7 +95,7 @@ class App:
 
         self.loop_sleep_refresh_rate_seconds = rpc_cache if rpc_cache > 0 else 5
 
-        self.arbitrum_details_last_updated = 0
+        self.arbitrum_details_next_update_time = 0
 
         # looks like { pubkey_bls : { add: [], exit: []}}
         self.arbitrum_node_events_bls_key_to_events_timestamps_map: dict[str, dict[str, list[int]]] = {}
@@ -197,8 +197,7 @@ class App:
                     )
 
                     if (
-                        time.time() - self.arbitrum_details_last_updated
-                        > config.backend.refresh_rate_seconds_arbitrum
+                        time.time() >= self.arbitrum_details_next_update_time
                     ):
                         self.time_keeper.add("arb_update")
                         self.update_arbitrum_details()
@@ -221,15 +220,11 @@ class App:
                     self.rpc.usage_tracker.write_failure_reasons_to_file(f"rpc-usage-failure-reasons-fetcher.txt")
 
                     now = time.time()
-                    arb_next_update = (
-                        self.arbitrum_details_last_updated
-                        + config.backend.refresh_rate_seconds_arbitrum
-                    )
 
                     sleep_seconds = max(
                         self.loop_sleep_refresh_rate_seconds,
                         min(
-                            arb_next_update,
+                            self.arbitrum_details_next_update_time,
                             network.pulse_target_timestamp,
                         )
                         - now,
@@ -241,10 +236,10 @@ class App:
                             format_seconds(now + sleep_seconds, 0),
                             (
                                 "network_update"
-                                if sleep_seconds == network.pulse_target_timestamp
+                                if sleep_seconds == network.pulse_target_timestamp - now
                                 else (
                                     "arb_update"
-                                    if sleep_seconds == arb_next_update - now
+                                    if sleep_seconds == self.arbitrum_details_next_update_time - now
                                     else "min_refresh"
                                 )
                             ),
@@ -557,7 +552,7 @@ class App:
             else:
                 self.log.info("No contribution contracts to write to db")
 
-            self.arbitrum_details_last_updated = time.time()
+            self.arbitrum_details_next_update_time = time.time() + config.backend.refresh_rate_seconds_arbitrum
             self.log.perf.end("update_arbitrum_details")
 
         except Exception as e:
@@ -566,7 +561,7 @@ class App:
 
 
     def update_arbitrum_node_event_timestamps(self):
-        recent_node_events = self.db_reader.get_arbitrum_events_since_timestamp([self.arbitrum_details_last_updated, ['NewServiceNodeV2', 'ServiceNodeExit', 'ServiceNodeLiquidated']])
+        recent_node_events = self.db_reader.get_arbitrum_events_since_timestamp([self.arbitrum_details_next_update_time, ['NewServiceNodeV2', 'ServiceNodeExit', 'ServiceNodeLiquidated']])
         for event in recent_node_events:
             pubkey_bls_encoded = event.args.get("pubkey")
             pubkey_bls = "0x{}".format(parse_bls_pubkey((pubkey_bls_encoded["X"], pubkey_bls_encoded["Y"])))
