@@ -246,7 +246,7 @@ def get_contract_addresses_core():
     )
 
 def get_contribution_contracts_cached():
-    return app.data.get("contracts", getter=app.db_reader.get_contribution_contracts)
+    return app.data.get("contracts", getter=app.db_reader.get_contribution_contracts, ttl=2)
 
 @app.route("/contract/contribution")
 def get_open_contract_details():
@@ -255,7 +255,7 @@ def get_open_contract_details():
     )
 
 def get_contribution_contract_for_sn_pubkey_uncached(sn_pubkey: bytes):
-    cached_contracts = get_contribution_contracts_cached()
+    cached_contracts = app.db_reader.get_contribution_contracts()
     for contract in cached_contracts:
         if contract.service_node_pubkey == sn_pubkey:
             return contract
@@ -265,7 +265,7 @@ def get_contribution_contract_for_sn_pubkey_uncached(sn_pubkey: bytes):
 def get_contribution_contract_for_sn_pubkey_cached(sn_pubkey: bytes):
     key = sn_pubkey.hex()
     return json_response(
-        {"contract": app.data.get("contract-sn-{}".format(key), getter=get_contribution_contract_for_sn_pubkey_uncached, getter_args=key, ttl=5)}
+        {"contract": app.data.get("contract-sn-{}".format(key), getter=get_contribution_contract_for_sn_pubkey_uncached, getter_args=key, ttl=2)}
     )
 
 def get_related_contribution_contracts_for_eth_address_uncached(eth_wal: str):
