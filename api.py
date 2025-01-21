@@ -84,11 +84,13 @@ app.url_map.converters["hex64"] = Hex64Converter
 app.url_map.converters["eth_wallet"] = EthConverter
 
 
-def get_median_operator_fee():
+def get_median_operator_fee_uncached():
     # remove nodes that only have a single contributor
     nodes = [n for n in get_nodes_cached() if len(n.contributors) > 1]
     return statistics.median([n.operator_fee for n in nodes]) if len(nodes) > 0 else 0
 
+def get_median_operator_fee_cached():
+    return app.data.get("median_operator_fee", getter=get_median_operator_fee_uncached, ttl=3600)
 
 def get_network_info_uncached():
     network_info = app.db_reader.get_network_info()
@@ -96,7 +98,7 @@ def get_network_info_uncached():
     if network_info is None:
         return None
     network_info = dataclasses.asdict(network_info)
-    network_info["median_operator_fee"] = get_median_operator_fee()
+    network_info["median_operator_fee"] = get_median_operator_fee_cached()
     return network_info, arbitrum_info
 
 def get_next_block_timestamp_est():
@@ -131,12 +133,10 @@ def get_network_info():
 def get_nodes_cached():
     return app.data.get("nodes", getter=app.db_reader.get_nodes)
 
-def get_nodes_response_uncached():
-    return json_response({"nodes": get_nodes_cached()})
 
 @app.route("/nodes")
 def route_get_nodes():
-    return app.data.get("nodes_res", getter=get_nodes_response_uncached)
+    return json_response({"nodes": get_nodes_cached()})
 
 
 def get_nodes_bls_keys_cached():
@@ -524,7 +524,7 @@ def operator_registrations(operator: str):
     return json_response(
         {
             "registrations": app.data.get(
-                f"op-{operator_bytes}",
+                f"registrations-op-{operator_bytes}",
                 getter=app.db_reader_registrations.get_registrations_for_operator,
                 getter_args=operator_bytes,
             )
