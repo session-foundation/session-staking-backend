@@ -103,7 +103,7 @@ class ServiceNodeContributionInterface(ContractInterface):
 
     @staticmethod
     def add_details_fetch_to_batch_added_batches():
-        return 5
+        return 6
 
     def add_details_fetch_to_batch(self, batch):
         batch.add(self.contract.functions.serviceNodeParams())
@@ -111,3 +111,4 @@ class ServiceNodeContributionInterface(ContractInterface):
         batch.add(self.contract.functions.blsPubkey())
         batch.add(self.contract.functions.getContributions())
         batch.add(self.contract.functions.status())
+        batch.add(self.contract.functions.manualFinalize())

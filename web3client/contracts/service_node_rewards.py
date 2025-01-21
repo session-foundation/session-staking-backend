@@ -18,7 +18,7 @@ class ServiceNodeRewardsMapEntry:
 class ServiceNodeRewardsInterface(ContractInterface):
     abi_name = "ServiceNodeRewards"
 
-    def __init__(self, web3_client: Web3Client, contract_address: str, scanner_safety_blocks: int):
+    def __init__(self, web3_client: Web3Client, contract_address: str, scanner_safety_blocks: int, scan_start_chunk_size: int):
         super().__init__(web3_client, contract_address, ServiceNodeRewardsInterface.abi_name)
         self.event_scanner = EventScanner(
             provider_url=web3_client.provider_url,
@@ -34,6 +34,7 @@ class ServiceNodeRewardsInterface(ContractInterface):
             # and we are unlikely to exceed the response size limit of the JSON-RPC server
             max_chunk_scan_size=10_000_000,
             safety_blocks=scanner_safety_blocks,
+            optimal_chunk_size=scan_start_chunk_size
         )
 
     def get_all_service_node_contract_ids(self):

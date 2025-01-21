@@ -484,7 +484,7 @@ class DBWriter:
             self.log.perf.end("write_arbitrum_events_to_db")
 
     def write_contribution_contracts_to_db(
-        self, contracts: list[ContributionContractDetails], contributions_list: list, add_event_timestamps: dict[str, int]
+        self, contracts: list[ContributionContractDetails], contributions_list: list, add_event_timestamps: dict[str, int], node_last_added_timestamps: dict[str,int], create_contract_timestamps: dict[str, int]
     ):
         self.log.perf.start("write_contribution_contracts_to_db")
 
@@ -499,7 +499,10 @@ class DBWriter:
                     """
                     INSERT OR REPLACE INTO contribution_contracts (
                         address,
+                        created_timestamp,
                         fee,
+                        last_added_timestamp,
+                        manual_finalize,
                         node_add_timestamp,
                         operator_address,
                         pubkey_bls,
@@ -507,12 +510,15 @@ class DBWriter:
                         service_node_signature,
                         status
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         (
                             contract.address,
+                            create_contract_timestamps.get(contract.address),
                             contract.fee,
+                            node_last_added_timestamps.get(contract.pubkey_bls),
+                            contract.manual_finalize,
                             add_event_timestamps.get(contract.pubkey_bls),
                             contract.operator_address,
                             contract.pubkey_bls,

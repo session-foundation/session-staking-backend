@@ -57,6 +57,7 @@ class EventScanner:
         max_request_retries: int = 5,
         request_retry_seconds: float = 5,
         safety_blocks: int = 10,
+        optimal_chunk_size: int = 20,
     ):
         """
         :param events: List of web3 Event we scan
@@ -93,7 +94,7 @@ class EventScanner:
         self.chunk_size_increase = 10.0
 
         # Start low at 20, this value is set at the end of the scan so we can use the optimal chunk size in future scans
-        self.optimal_chunk_size = 20
+        self.optimal_chunk_size = optimal_chunk_size
 
     def scan_chunk(self, start_block, end_block) -> Tuple[int, list]:
         """Read and process events between to block numbers.

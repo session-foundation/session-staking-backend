@@ -100,6 +100,9 @@ class App:
         # looks like { pubkey_bls : { add: [], exit: []}}
         self.arbitrum_node_events_bls_key_to_events_timestamps_map: dict[str, dict[str, list[int]]] = {}
 
+        # dict of contract address to timestamp of when it was created
+        self.contribution_contract_creation_timestamps: dict[str, int] = {}
+
         self.web3_client = Web3Client(
             provider_urls=config.backend.web3_provider_urls,
             caller_address=config.backend.web3_caller_address,
@@ -108,7 +111,7 @@ class App:
             abi_manager=ABIManager(db_writer=self.db_writer, abi_dir=config.backend.abi_dir),
         )
 
-        self.log.info(f"Using contract addresses:\n Token: {config.backend.addr_token}\n SN Rewards: {config.backend.addr_sn_rewards}\n Reward Rate Pool: {config.backend.addr_reward_rate_pool}")
+        self.log.info(f"Using contract addresses:\n Token: {config.backend.addr_token}\n SN Rewards: {config.backend.addr_sn_rewards}\n Reward Rate Pool: {config.backend.addr_reward_rate_pool}\n SN Contribution Factory: {config.backend.addr_sn_contrib_factory}")
 
         self.token_contract = TokenInterface(
             web3_client=self.web3_client, contract_address=config.backend.addr_token
@@ -117,6 +120,7 @@ class App:
             web3_client=self.web3_client,
             contract_address=config.backend.addr_sn_rewards,
             scanner_safety_blocks=config.backend.arbitrum_rescan_safety_blocks,
+            scan_start_chunk_size=config.backend.arbitrum_scan_start_chunk_size
         )
         self.reward_rate_pool = RewardRatePoolInterface(
             web3_client=self.web3_client, contract_address=config.backend.addr_reward_rate_pool
@@ -125,6 +129,7 @@ class App:
             web3_client=self.web3_client,
             contract_address=config.backend.addr_sn_contrib_factory,
             scanner_safety_blocks=config.backend.arbitrum_rescan_safety_blocks,
+            scan_start_chunk_size=config.backend.arbitrum_scan_start_chunk_size
         )
         self.service_node_contribution = ServiceNodeContributionInterface(
             web3_client=self.web3_client,
@@ -545,9 +550,9 @@ class App:
                     self.web3_client, self.log, contrib_contract_list
                 )
 
-                node_add_timestamps = self.update_arbitrum_node_event_timestamps()
+                node_add_timestamps, node_last_added_timestamps = self.update_arbitrum_node_event_timestamps()
                 self.db_writer.write_contribution_contracts_to_db(
-                    contract_details_list, contributions_list, node_add_timestamps
+                    contract_details_list, contributions_list, node_add_timestamps, node_last_added_timestamps, self.contribution_contract_creation_timestamps
                 )
             else:
                 self.log.info("No contribution contracts to write to db")
@@ -561,22 +566,29 @@ class App:
 
 
     def update_arbitrum_node_event_timestamps(self):
-        recent_node_events = self.db_reader.get_arbitrum_events_since_timestamp([self.arbitrum_details_next_update_time, ['NewServiceNodeV2', 'ServiceNodeExit', 'ServiceNodeLiquidated']])
+        recent_node_events = self.db_reader.get_arbitrum_events_since_timestamp([self.arbitrum_details_next_update_time, ['NewServiceNodeV2', 'ServiceNodeExit', 'ServiceNodeLiquidated', 'NewServiceNodeContributionContract']])
         for event in recent_node_events:
-            pubkey_bls_encoded = event.args.get("pubkey")
-            pubkey_bls = "0x{}".format(parse_bls_pubkey((pubkey_bls_encoded["X"], pubkey_bls_encoded["Y"])))
-            if event.name == "NewServiceNodeV2":
-                self.arbitrum_node_events_bls_key_to_events_timestamps_map.setdefault(pubkey_bls, {}).setdefault("add", []).append(event.timestamp)
-            elif event.name == "ServiceNodeExit" or event.name == "ServiceNodeLiquidated":
-                self.arbitrum_node_events_bls_key_to_events_timestamps_map.setdefault(pubkey_bls, {}).setdefault("exit", []).append(event.timestamp)
+            if event.name == "NewServiceNodeContributionContract":
+                self.contribution_contract_creation_timestamps[event.main_arg] = event.timestamp
+            else:
+                pubkey_bls_encoded = event.args.get("pubkey")
+                pubkey_bls = "0x{}".format(parse_bls_pubkey((pubkey_bls_encoded["X"], pubkey_bls_encoded["Y"])))
+                if event.name == "NewServiceNodeV2":
+                    self.arbitrum_node_events_bls_key_to_events_timestamps_map.setdefault(pubkey_bls, {}).setdefault("add", []).append(event.timestamp)
+                elif event.name == "ServiceNodeExit" or event.name == "ServiceNodeLiquidated":
+                    self.arbitrum_node_events_bls_key_to_events_timestamps_map.setdefault(pubkey_bls, {}).setdefault("exit", []).append(event.timestamp)
+
 
         node_add_timestamps = {}
+        node_last_added_timestamps = {}
         for pubkey_bls, event_timestamps in self.arbitrum_node_events_bls_key_to_events_timestamps_map.items():
             add_events = event_timestamps.get("add", [])
             exit_events = event_timestamps.get("exit", [])
-            node_add_timestamps[pubkey_bls] = max(add_events) if len(add_events) > 0 and len(add_events) > len(exit_events) else None
+            last_added_timestamp = max(add_events) if len(add_events) > 0 else None
+            node_last_added_timestamps[pubkey_bls] = last_added_timestamp
+            node_add_timestamps[pubkey_bls] = last_added_timestamp if len(add_events) > len(exit_events) else None
 
-        return node_add_timestamps
+        return node_add_timestamps, node_last_added_timestamps
 
 
 app = App(config.backend.fetcher_name if config.backend.fetcher_name else __name__)

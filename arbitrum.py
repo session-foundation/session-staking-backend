@@ -39,6 +39,7 @@ def get_new_contribution_contracts(
     ]
     logger.perf.end("create_contribution_contract_instances")
     logger.debug("Found {} new contract events".format(len(events)))
+    logger.debug("Found {} new contracts".format(len(contracts)))
     logger.perf.end("get_new_contribution_contracts")
     return contracts, events
 
@@ -47,6 +48,7 @@ def get_new_contribution_contracts(
 class ContributionContractDetails:
     address: str | None
     fee: int | None
+    manual_finalize: bool | None
     operator_address: str | None
     pubkey_bls: str | None
     service_node_pubkey: str | None
@@ -128,14 +130,17 @@ def update_contribution_contract_details(
 
         status = responses[i + 4]
 
+        manual_finalize = responses[i + 5]
+
         contract_details.append(
             ContributionContractDetails(
                 address=contract_address,
-                service_node_pubkey=f"{params[0]:032x}",
-                service_node_signature=f"{params[1]:032x}{params[2]:032x}",
                 fee=params[3],
+                manual_finalize=manual_finalize,
                 operator_address=operator_address,
                 pubkey_bls="0x{:0128x}".format((pubkey_bls_data[0] << 256) + pubkey_bls_data[1]),
+                service_node_pubkey=f"{params[0]:032x}",
+                service_node_signature=f"{params[1]:032x}{params[2]:032x}",
                 status=status,
             )
         )

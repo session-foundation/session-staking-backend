@@ -175,7 +175,10 @@ CREATE INDEX arbitrum_events_main_arg_idx ON arbitrum_events(main_arg, block DES
 
 CREATE TABLE contribution_contracts (
     address TEXT NOT NULL,
+    created_timestamp INTEGER,
     fee INTEGER NOT NULL,
+    last_added_timestamp INTEGER,
+    manual_finalize BOOLEAN NOT NULL,
     node_add_timestamp INTEGER,
     operator_address TEXT NOT NULL,
     pubkey_bls BLOB NOT NULL,

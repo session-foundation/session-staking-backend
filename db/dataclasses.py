@@ -114,7 +114,10 @@ class DBNetworkInfo:
 @dataclass
 class DBContributionContract:
     address: str
+    created_timestamp: int
     fee: int
+    last_added_timestamp: int
+    manual_finalize: bool
     node_add_timestamp: int
     operator_address: str
     pubkey_bls: str

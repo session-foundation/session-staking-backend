@@ -50,7 +50,8 @@ class Backend:
     """
     abi_dir = "web3client/abis"
     # Arbitrum runs at ~4 blocks per second, and the rpc node has a limit of 30m, so scan for 120 blocks
-    arbitrum_rescan_safety_blocks: int = 120
+    arbitrum_rescan_safety_blocks: int = 60
+    arbitrum_scan_start_chunk_size: int = 20
     addr_reward_rate_pool:         str = "0x0000000000000000000000000000000000000000"
     addr_token:                    str = "0x0000000000000000000000000000000000000000"
     addr_sn_contrib:               str = "0x0000000000000000000000000000000000000000"
