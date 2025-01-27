@@ -140,7 +140,6 @@ def store_registration(sn_pubkey: bytes):
                 "pubkey_bls": byte_decoder(64),
                 "sig_ed25519": byte_decoder(64),
                 "sig_bls": byte_decoder(128),
-                "-contract": raw_eth_addr,
                 "operator": raw_eth_addr,
             }
         )

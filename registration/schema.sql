@@ -2,7 +2,6 @@
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE registrations (
-    contract BLOB,
     operator BLOB NOT NULL,
     pubkey_bls BLOB NOT NULL,
     pubkey_ed25519 BLOB NOT NULL,
@@ -15,7 +14,7 @@ CREATE TABLE registrations (
     CHECK(length(sig_ed25519) == 64),
     CHECK(length(sig_bls) == 128),
     CHECK(length(operator) == 20),
-    CHECK(contract IS NULL OR length(contract) == 20)
+    PRIMARY KEY(pubkey_bls, pubkey_ed25519)
 );
 
 CREATE INDEX registrations_timestamp_idx ON registrations(timestamp DESC);

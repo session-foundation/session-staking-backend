@@ -177,7 +177,6 @@ class RewardsInfo:
 
 @dataclass
 class Registration:
-    contract: bytes | None
     operator: bytes
     pubkey_bls: bytes
     pubkey_ed25519: bytes
@@ -186,7 +185,6 @@ class Registration:
     timestamp: float
 
     def __post_init__(self):
-        self.contract = self.contract.hex() if self.contract is not None else None
         self.operator = eth_format(self.operator)
         self.pubkey_bls = self.pubkey_bls.hex()
         self.pubkey_ed25519 = self.pubkey_ed25519.hex()

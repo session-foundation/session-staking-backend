@@ -21,17 +21,15 @@ class DBWriterRegistrations:
                 cursor.execute(
                     """
                     INSERT OR REPLACE INTO registrations (
-                        contract,
                         operator,
                         pubkey_bls,
                         pubkey_ed25519,
                         sig_bls,
                         sig_ed25519
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
                     (
-                        registration.get("contract"),
                         registration.get("operator"),
                         registration.get("pubkey_bls"),
                         registration.get("pubkey_ed25519"),
