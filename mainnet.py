@@ -1,4 +1,3 @@
-from sent import app, config
-import oxenmq
+from api import app, config
 
 config.oxend_rpc = 'ipc://oxend/mainnet.sock'

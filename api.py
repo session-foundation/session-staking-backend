@@ -572,6 +572,14 @@ def sn_pubkey_registrations(sn_pubkey: bytes) -> flask.Response:
     )
     return result
 
+"""
+//////////////////////////////////////////////////////////////
+//                                                          //
+//                         Utility                          //
+//                                                          //
+//////////////////////////////////////////////////////////////
+"""
+
 def bootstrap():
     get_and_refresh_allowed_contract_names()
 
