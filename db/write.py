@@ -5,7 +5,7 @@ from contextlib import closing
 
 from web3 import Web3
 
-from arbitrum import ContributionContractDetails
+from staking.arbitrum import ContributionContractDetails
 from db.dataclasses import RewardsInfo, DBNodeExit
 from log import Log
 from oxen.rpc import ServiceNode, NetworkInfo

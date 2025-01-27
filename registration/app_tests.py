@@ -1,7 +1,10 @@
 import time
 import pytest
-from registrations import app
+from registration.app import create_app
+from util.config_import import import_config
 
+config = import_config()
+app = create_app(config)
 
 @pytest.fixture()
 def client():

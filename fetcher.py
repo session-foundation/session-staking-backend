@@ -4,7 +4,7 @@ import subprocess
 import time
 
 import config
-from arbitrum import (
+from staking.arbitrum import (
     get_service_node_rewards_contract_id_map,
     get_new_contribution_contracts,
     update_contribution_contract_details, batch_populate_events_with_block_timestamps, populate_events_with_main_arg,
@@ -20,7 +20,7 @@ from db.read import DBReader
 from db.write import DBWriter
 from log import Log
 from oxen.rpc import ServiceNode, OxenRPC, NetworkInfo
-from util import format_seconds, is_not_empty_string
+from util import format_seconds
 from log.time_keeper import TimeKeeper
 from util.parse import parse_bls_pubkey
 from web3client.abi_manager import ABIManager
@@ -34,7 +34,6 @@ from web3client.contracts.service_node_contribution_factory import (
 )
 from web3client.contracts.service_node_rewards import ServiceNodeRewardsInterface
 from web3client.contracts.token import TokenInterface
-from oxen.omq import omq_connection
 
 
 class App:
