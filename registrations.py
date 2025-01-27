@@ -4,6 +4,10 @@ import time
 
 import eth_utils
 import subprocess
+
+from werkzeug.middleware.proxy_fix import ProxyFix
+from util.flask import FlaskReqLimiter
+
 import config
 
 from db.util import is_db_initialized, init_db
@@ -66,11 +70,20 @@ class App(flask.Flask):
 
         self.allowed_contract_names = set()
 
+        self.log.info(f"IP Rate limit: {config.backend.registration_api_rate_limit} per {config.backend.registration_api_rate_limit_period} seconds")
+
 
 app = App(
     config.backend.registration_api_name if config.backend.registration_api_name else __name__
 )
 
+# Enables more reliable proxy pass through for rate limiting
+app.wsgi_app = ProxyFix(app.wsgi_app)
+app.req_limiter = FlaskReqLimiter(max_reqs_per_sec=config.backend.registration_api_rate_limit, rate_limit_period=config.backend.registration_api_rate_limit_period)
+
+@app.before_request
+def rate_limit():
+    return app.req_limiter.rate_limit()
 
 app.url_map.converters["hex64"] = Hex64Converter
 app.url_map.converters["eth_wallet"] = EthConverter
