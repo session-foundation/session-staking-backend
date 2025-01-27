@@ -1,67 +1,73 @@
 #!/usr/bin/env python3
+from dataclasses import dataclass
 from uwsgidecorators import timer
 from price.coingecko import CoinGeckoTokenPriceRequest
 from price.read import DBReaderPrices, PriceDB
 from price.write import DBWriterPrices
-from util.flask_utils import FlaskApp, FlaskReqLimiter, json_response
-from werkzeug.middleware.proxy_fix import ProxyFix
+from util.flask_utils import FlaskApp, FlaskReqLimiter, json_response, FlaskAppConfig
 from db.util import is_db_initialized, init_db
 
 
-class App(FlaskApp):
-    def __init__(self, config):
-        name = config.backend.prices_api_name if config.backend.prices_api_name else __name__
-        super().__init__(name, enable_perf=config.backend.performance_logging,
-                         log_level=config.backend.log_level, log_level_generic=config.backend.log_level_generic,
-                         cache_stale_time_seconds=config.backend.stale_time_seconds)
+@dataclass
+class PriceAppConfig(FlaskAppConfig):
+    # Flask App Config
+    sqlite_db: str = None
+    sqlite_schema: str = None
+    coingecko_api_key: str = None
+    coingecko_api_url: str = None
+    coingecko_api_token_ids: list[str] = None
+    coingecko_api_currencies: list[str] = None
 
-        if not is_db_initialized(config.backend.prices_sqlite_db):
+    # Route Config
+    coingecko_api_rate_poll_rate_seconds: int = None
+    default_token: str = None
+    default_currency: str = None
+
+
+class App(FlaskApp):
+    def __init__(self, config: PriceAppConfig, name=__name__):
+        super().__init__(config)
+
+        if not is_db_initialized(config.sqlite_db):
             self.log.info(
                 "Initializing database {} with schema {}".format(
-                    config.backend.prices_sqlite_db, config.backend.prices_sqlite_schema
+                    config.sqlite_db, config.sqlite_schema
                 )
             )
             init_db(
-                config.backend.prices_sqlite_db, config.backend.prices_sqlite_schema
+                config.sqlite_db, config.sqlite_schema
             )
 
-        self.db_reader = DBReaderPrices(
-            db_path=config.backend.prices_sqlite_db,
-            log_level=config.backend.log_level,
-            perf=config.backend.performance_logging,
+        self.db_reader_prices = DBReaderPrices(
+            db_path=config.sqlite_db,
+            log_level=config.log_level,
+            perf=config.enable_perf,
         )
-        self.db_writer = DBWriterPrices(
-            db_path=config.backend.prices_sqlite_db,
-            log_level=config.backend.log_level,
-            perf=config.backend.performance_logging,
+        self.db_writer_prices = DBWriterPrices(
+            db_path=config.sqlite_db,
+            log_level=config.log_level,
+            perf=config.enable_perf,
         )
         self.token_price_request = CoinGeckoTokenPriceRequest(
             logger=self.log,
-            key=config.backend.coingecko_api_key,
-            url=config.backend.coingecko_api_url,
-            token_ids=config.backend.coingecko_api_token_ids,
-            currencies=config.backend.coingecko_api_currencies,
+            key=config.coingecko_api_key,
+            url=config.coingecko_api_url,
+            token_ids=config.coingecko_api_token_ids,
+            currencies=config.coingecko_api_currencies,
             include_market_cap=True,
             include_last_updated_at=True,
         )
 
-        self.log.info(
-            f"IP Rate limit: {config.backend.prices_api_rate_limit} per {config.backend.prices_api_rate_limit_period} seconds")
-        self.log.info(
-            "Polling for price info every {} seconds".format(config.backend.prices_api_refetch_interval_seconds))
 
-
-def create_app(config):
+def create_app(config: PriceAppConfig):
     app = App(config)
 
-    # Enables more reliable proxy pass through for rate limiting
-    app.wsgi_app = ProxyFix(app.wsgi_app)
-    app.req_limiter = FlaskReqLimiter(max_reqs_per_sec=config.backend.prices_api_rate_limit,
-                                      rate_limit_period=config.backend.prices_api_rate_limit_period)
+    if config.api_rate_limit is not None and config.api_rate_limit_period is not None:
+        @app.before_request
+        def rate_limit():
+            return app.req_limiter.rate_limit()
 
-    @app.before_request
-    def rate_limit():
-        return app.req_limiter.rate_limit()
+    price_poll_rate_seconds = config.coingecko_api_rate_poll_rate_seconds if config.coingecko_api_rate_poll_rate_seconds is not None else 0
 
     """
     //////////////////////////////////////////////////////////////
@@ -82,11 +88,11 @@ def create_app(config):
         if data:
             return data
 
-        data = app.db_reader.get_latest_prices(token)
+        data = app.db_reader_prices.get_latest_prices(token)
 
         updated_at = max(price.updated_at for price in data.values())
 
-        stale_time = updated_at + config.backend.prices_api_refetch_interval_seconds
+        stale_time = updated_at + price_poll_rate_seconds
         app.cache.set_cache_value(key, data, invalidate_timestamp=stale_time)
         return data
 
@@ -97,9 +103,8 @@ def create_app(config):
         return app.cache.get(f"price-{token}-{currency}", getter=get_price_for_token_uncached,
                              getter_args=[token, currency], ttl=1)
 
-    def get_token_price_info(token: str = config.backend.prices_api_default_token):
-        data = get_price_for_token_cached(token,
-                                          config.backend.prices_api_default_currency)
+    def get_token_price_info(token: str = config.default_token):
+        data = get_price_for_token_cached(token, config.default_currency)
 
         if data is None:
             return json_response({"error": "Failed to fetch price"})
@@ -126,14 +131,17 @@ def create_app(config):
             "price": get_token_price_info(token)
         })
 
-    @timer(config.backend.prices_api_refetch_interval_seconds)
-    def fetch_token_price_info(signum):
-        app.logger.info("Fetch token price info start")
-        data = app.token_price_request.get()
-        formatted_data = app.token_price_request.format_for_db(data)
-        app.db_writer.write_prices_to_db(formatted_data)
-        app.logger.info("Fetch token price info finish")
+    if price_poll_rate_seconds > 0:
+        app.log.info("Polling for price info every {} seconds".format(price_poll_rate_seconds))
 
-    fetch_token_price_info(None)
+        @timer(price_poll_rate_seconds)
+        def fetch_token_price_info(signum):
+            app.logger.info("Fetch token price info start")
+            data = app.token_price_request.get()
+            formatted_data = app.token_price_request.format_for_db(data)
+            app.db_writer_prices.write_prices_to_db(formatted_data)
+            app.logger.info("Fetch token price info finish")
+
+        fetch_token_price_info(None)
 
     return app
