@@ -118,13 +118,24 @@ def update_contribution_contract_details(
         contributions_beneficiaries = contributions[1]
         contributions_amounts = contributions[2]
 
+        reserved = responses[i + 6]
+        reserved_addresses = reserved[0]
+        reserved_amounts = reserved[1]
+
+        reserved_slots = {}
+
+        for j in range(len(reserved_addresses)):
+            reserved_slots[reserved_addresses[j]] = reserved_amounts[j]
+
         for j in range(len(contributions_addresses)):
+            address = contributions_addresses[j]
             contributions_list.append(
                 {
                     "contract_address": contract_address,
-                    "address": contributions_addresses[j],
+                    "address": address,
                     "amount": contributions_amounts[j],
                     "beneficiary_address": contributions_beneficiaries[j],
+                    "reserved": reserved_slots.get(address, 0),
                 }
             )
 
@@ -151,7 +162,7 @@ def update_contribution_contract_details(
     return contract_details, contributions_list
 
 
-def get_block_timestamp(web3_client:Web3Client, block_num: int):
+def get_block_timestamp(web3_client: Web3Client, block_num: int):
     """Get block timestamp"""
     try:
         block_info = web3_client.web3.eth.get_block(block_num)

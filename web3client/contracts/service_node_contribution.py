@@ -65,45 +65,9 @@ class ServiceNodeContributionInterface(ContractInterface):
         pks = self.contract.functions.blsPubkey().call()
         return "0x{:0128x}".format((pks[0] << 256) + pks[1])
 
-    def get_service_node_params(self):
-        """
-        Get the parameters of the service node.
-        :return: Dictionary containing service node parameters.
-        """
-        params = self.contract.functions.serviceNodeParams().call()
-        return {
-            "serviceNodePubkey": f"{params[0]:032x}",
-            "serviceNodeSignature": f"{params[1]:032x}{params[2]:032x}",
-            "fee": params[3],
-        }
-
-    def get_operator(self):
-        """
-        returns the service node operator
-        """
-        return self.contract.functions.operator().call()
-
-    def get_contributions(self):
-        # (address[] memory addrs, address[] memory beneficiaries, uint256[] memory contribs)
-        contributions = self.contract.functions.getContributions().call()
-        addresses = contributions[0]
-        beneficiaries = contributions[1]
-        contributions = contributions[2]
-
-        contributions_list = []
-        for i in range(len(addresses)):
-            contributions_list.append(
-                {
-                    "address": addresses[i],
-                    "amount": contributions[i],
-                    "beneficiary": beneficiaries[i],
-                }
-            )
-        return contributions_list
-
     @staticmethod
     def add_details_fetch_to_batch_added_batches():
-        return 6
+        return 7
 
     def add_details_fetch_to_batch(self, batch):
         batch.add(self.contract.functions.serviceNodeParams())
@@ -112,3 +76,4 @@ class ServiceNodeContributionInterface(ContractInterface):
         batch.add(self.contract.functions.getContributions())
         batch.add(self.contract.functions.status())
         batch.add(self.contract.functions.manualFinalize())
+        batch.add(self.contract.functions.getReserved())

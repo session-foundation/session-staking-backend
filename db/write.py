@@ -573,9 +573,10 @@ class DBWriter:
                         address,
                         amount,
                         beneficiary_address,
-                        contract_address
+                        contract_address,
+                        reserved
                     )
-                    VALUES (?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
                     (
                         (
@@ -583,6 +584,7 @@ class DBWriter:
                             contribution["amount"],
                             contribution["beneficiary_address"],
                             contribution["contract_address"],
+                            contribution["reserved"],
                         )
                         for contribution in contributions_list
                     ),
