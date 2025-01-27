@@ -82,6 +82,23 @@ class Backend:
     sqlite_snapshot_time_interval_seconds: int = 600
     snapshot_on_startup:                  bool = False
 
+    """
+    PRICE FETCHER CONFIG
+    """
+    prices_api_name:                    str = "prices_api"
+    coingecko_api_key:                  str = ""
+    coingecko_api_url:                  str = "https://api.coingecko.com/api"
+    coingecko_api_token_ids:      list[str] = ["ethereum", "chainflip"]
+    coingecko_api_currencies:     list[str] = ["usd", "aud"]
+
+    # Creates a request per period limit by IP address (default is 10 requests per 10 minutes)
+    prices_api_rate_limit:              int = 10
+    prices_api_rate_limit_period:       int = 600
+    prices_sqlite_db:                   str = "ssb-prices.db"
+    prices_sqlite_schema:               str = "price/schema.sql"
+    prices_api_default_currency:        str = "usd"
+    prices_api_default_token:           str = "ethereum"
+    prices_api_refetch_interval_seconds:int = 300
 
 # Session mainnet contracts
 mainnet_backend = Backend()
