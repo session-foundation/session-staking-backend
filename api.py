@@ -10,11 +10,12 @@ from uwsgidecorators import timer
 from werkzeug.exceptions import GatewayTimeout
 
 import config
+from db.dataclasses import ArbitrumInfo, DBNetworkInfo
 from db.read import DBReader
 from log import Log
 from oxen.rpc import OxenRPC
 from registration.read import DBReaderRegistrations
-from util.data import DataManager
+from util.cache import Cache
 from util.parse import Hex64Converter, hexify, EthConverter, eth_format
 
 
@@ -64,7 +65,7 @@ class App(flask.Flask):
 
         self.loop_sleep_refresh_rate_seconds = rpc_cache if rpc_cache > 0 else 5
 
-        self.data = DataManager(stale_time_seconds=config.backend.stale_time_seconds)
+        self.cache = Cache(stale_time_seconds=config.backend.stale_time_seconds)
 
         self.allowed_contract_names = set()
 
@@ -90,13 +91,13 @@ def get_median_operator_fee_uncached():
     return statistics.median([n.operator_fee for n in nodes]) if len(nodes) > 0 else 0
 
 def get_median_operator_fee_cached():
-    return app.data.get("median_operator_fee", getter=get_median_operator_fee_uncached, ttl=3600)
+    return app.cache.get("median_operator_fee", getter=get_median_operator_fee_uncached, ttl=3600)
 
-def get_network_info_uncached():
+def get_network_info_uncached() -> tuple[dict | None, ArbitrumInfo]:
     network_info = app.db_reader.get_network_info()
     arbitrum_info = app.db_reader.get_arbitrum_info()
     if network_info is None:
-        return None
+        return None, arbitrum_info
     network_info = dataclasses.asdict(network_info)
     network_info["median_operator_fee"] = get_median_operator_fee_cached()
     return network_info, arbitrum_info
@@ -106,10 +107,10 @@ def get_next_block_timestamp_est():
     return network_info["pulse_target_timestamp"]
 
 def get_network_info_cached():
-    return app.data.get("network_info", getter=get_network_info_uncached, ttl=1)
+    return app.cache.get("network_info", getter=get_network_info_uncached, ttl=1)
 
 
-def json_response(vals):
+def json_response(vals, include_network_info=True):
     """
     Takes a dict, adds some general info fields to it, and jsonifies it for a flask route function
     return value.  The dict gets passed through `hexify` first to convert any bytes values to hex.
@@ -119,10 +120,15 @@ def json_response(vals):
     """
     hexify(vals)
 
-    network_info, arbitrum_info = get_network_info_cached()
-    network_info["l2_height"] = arbitrum_info.block
-    network_info["l2_height_timestamp"] = arbitrum_info.timestamp
-    return flask.jsonify({**vals, "network": network_info, "t": time.time()})
+    data = {**vals, "t": time.time()}
+
+    if include_network_info:
+        network_info, arbitrum_info = get_network_info_cached()
+        network_info["l2_height"] = arbitrum_info.block
+        network_info["l2_height_timestamp"] = arbitrum_info.timestamp
+        data["network"] = network_info
+
+    return flask.jsonify(data)
 
 
 @app.route("/info")
@@ -131,7 +137,7 @@ def get_network_info():
 
 
 def get_nodes_cached():
-    return app.data.get("nodes", getter=app.db_reader.get_nodes)
+    return app.cache.get("nodes", getter=app.db_reader.get_nodes)
 
 
 @app.route("/nodes")
@@ -140,7 +146,7 @@ def route_get_nodes():
 
 
 def get_nodes_bls_keys_cached():
-    return app.data.get("contract_node_bls_keys_added", getter=app.db_reader.get_service_node_rewards_contract_id_bls_key_map)
+    return app.cache.get("contract_node_bls_keys_added", getter=app.db_reader.get_service_node_rewards_contract_id_bls_key_map)
 
 
 @app.route("/nodes/bls")
@@ -170,7 +176,7 @@ def get_related_stakes_for_eth_address_uncached(address: ChecksumAddress):
     return related_nodes
 
 def get_related_stakes_for_eth_address_cached(address: ChecksumAddress):
-    return app.data.get("related-stakes-{}".format(address), getter=get_related_stakes_for_eth_address_uncached, getter_args=address)
+    return app.cache.get("related-stakes-{}".format(address), getter=get_related_stakes_for_eth_address_uncached, getter_args=address)
 
 # TODO: might make sense to investigate storing contributor and operator addresses in the db as blobs and compare with bytes
 @app.route("/stakes/<eth_wallet:eth_wal>")
@@ -212,7 +218,7 @@ def route_get_stakes_for_sn_pubkey(sn_pubkey: bytes):
 
 
 def get_cached_allowed_contract_names():
-    return app.data.get(
+    return app.cache.get(
         "allowed_contract_names",
         getter=get_and_refresh_allowed_contract_names,
         ttl=config.backend.stale_time_seconds_contract_abis
@@ -227,26 +233,26 @@ def route_get_abi_names():
 @app.route("/contract/abis")
 def route_get_abis():
     return json_response(
-        {"abis": app.data.get("abis_all", getter=app.db_reader.get_smart_contract_abis,
-                              ttl=config.backend.stale_time_seconds_contract_abis)}
+        {"abis": app.cache.get("abis_all", getter=app.db_reader.get_smart_contract_abis,
+                               ttl=config.backend.stale_time_seconds_contract_abis)}
     )
 
 
 @app.route("/contract/addresses")
 def get_contract_addresses():
     return json_response(
-        {"addresses": app.data.get("addresses_all", getter=app.db_reader.get_smart_contract_addresses)}
+        {"addresses": app.cache.get("addresses_all", getter=app.db_reader.get_smart_contract_addresses)}
     )
 
 @app.route("/contract/addresses/core")
 def get_contract_addresses_core():
     return json_response(
-        {"addresses": app.data.get("addresses_core", getter=app.db_reader.get_smart_contract_addresses_core,
-                                   ttl=config.backend.stale_time_seconds_contract_abis )}
+        {"addresses": app.cache.get("addresses_core", getter=app.db_reader.get_smart_contract_addresses_core,
+                                    ttl=config.backend.stale_time_seconds_contract_abis)}
     )
 
 def get_contribution_contracts_cached():
-    return app.data.get("contracts", getter=app.db_reader.get_contribution_contracts, ttl=2)
+    return app.cache.get("contracts", getter=app.db_reader.get_contribution_contracts, ttl=2)
 
 @app.route("/contract/contribution")
 def get_open_contract_details():
@@ -263,7 +269,7 @@ def get_contribution_contracts_for_sn_pubkey_uncached(sn_pubkey: bytes):
 def get_contribution_contract_for_sn_pubkey_cached(sn_pubkey: bytes):
     key = sn_pubkey.hex()
     return json_response(
-        {"contracts": app.data.get("contract-sn-{}".format(key), getter=get_contribution_contracts_for_sn_pubkey_uncached, getter_args=key, ttl=2)}
+        {"contracts": app.cache.get("contract-sn-{}".format(key), getter=get_contribution_contracts_for_sn_pubkey_uncached, getter_args=key, ttl=2)}
     )
 
 def get_related_contribution_contracts_for_eth_address_uncached(eth_wal: str):
@@ -280,7 +286,7 @@ def get_related_contribution_contracts_for_eth_address_uncached(eth_wal: str):
     return related_contracts
 
 def get_related_contribution_contracts_for_eth_address_cached(eth_wal: str):
-    return app.data.get("related-contracts-{}".format(eth_wal), getter=get_related_contribution_contracts_for_eth_address_uncached, getter_args=eth_wal)
+    return app.cache.get("related-contracts-{}".format(eth_wal), getter=get_related_contribution_contracts_for_eth_address_uncached, getter_args=eth_wal)
 
 @app.route("/contract/contribution/<eth_wallet:eth_wal>")
 def get_contribution_contracts_for_wallet(eth_wal: str):
@@ -305,7 +311,7 @@ def get_abi(contract_name: str):
 
     return json_response(
         {
-            "contract": app.data.get(
+            "contract": app.cache.get(
                 "abi-{}".format(contract_name), getter=app.db_reader.get_smart_contract_abi, getter_args=contract_name,
                 ttl=config.backend.stale_time_seconds_contract_abis
             )
@@ -320,7 +326,7 @@ def get_contract_address(contract_name: str):
 
     return json_response(
         {
-            "address": app.data.get(
+            "address": app.cache.get(
                 "address-{}".format(contract_name),
                 getter=app.db_reader.get_smart_contract_address,
                 getter_args=contract_name,
@@ -339,7 +345,7 @@ def get_contract_address(contract_name: str):
 
 def get_events_handler(count_limit=500, skip=0):
     limit = min(count_limit, 500)
-    events, limit, skip, total = app.data.get("events-{}-{}".format(count_limit,skip), getter=app.db_reader.get_arbitrum_events_page, getter_args=[limit, skip], ttl=10)
+    events, limit, skip, total = app.cache.get("events-{}-{}".format(count_limit, skip), getter=app.db_reader.get_arbitrum_events_page, getter_args=[limit, skip], ttl=10)
     pagination = {"limit": limit, "skip": skip, "total": total}
 
     return {"events": events, "pagination": pagination}
@@ -348,16 +354,19 @@ def get_events_handler(count_limit=500, skip=0):
 def get_events(count: int, skip: int):
     return json_response(get_events_handler(count, skip))
 
+def get_arbitrum_info_uncached():
+    return app.db_reader.get_arbitrum_info()
+
 @app.route("/arbitrum-info")
 def get_arbitrum_info():
-    return json_response({"info": app.data.get("arbitrum-info", getter=app.db_reader.get_arbitrum_info)})
+    return json_response({"info": app.cache.get("arbitrum-info", getter=get_arbitrum_info_uncached)})
 
 @app.route("/stake-events/<int:contract_id>")
 def get_stake_events(contract_id: int):
     if contract_id < 0:
         return flask.abort(400, "Invalid contract ID")
 
-    return json_response({"events": app.data.get("stake-events-{}".format(contract_id), getter=app.db_reader.get_arbitrum_events_for_stake_contrat_id, getter_args=contract_id)})
+    return json_response({"events": app.cache.get("stake-events-{}".format(contract_id), getter=app.db_reader.get_arbitrum_events_for_stake_contrat_id, getter_args=contract_id)})
 
 """
 //////////////////////////////////////////////////////////////
@@ -384,8 +393,8 @@ def handle_get_exit_and_liquidation(params: [bytes, bool]):
 
 def handle_get_exit_and_liquidation_cached(params: [bytes, bool]):
     try:
-        return app.data.get(f"exit-{params[0]}-{params[1]}", getter=handle_get_exit_and_liquidation, getter_args=params,
-                            invalidate_timestamp=get_next_block_timestamp_est())
+        return app.cache.get(f"exit-{params[0]}-{params[1]}", getter=handle_get_exit_and_liquidation, getter_args=params,
+                             invalidate_timestamp=get_next_block_timestamp_est())
     except GatewayTimeout as e:
         app.logger.error(f"Exception: {e}")
         return flask.abort(504)  # Gateway timeout
@@ -411,8 +420,8 @@ def get_exit_liquidation_list_uncached():
 
 
 def get_exit_liquidation_list_cached():
-    return app.data.get("exit_liquidation_list", getter=get_exit_liquidation_list_uncached,
-                        invalidate_timestamp=get_next_block_timestamp_est())
+    return app.cache.get("exit_liquidation_list", getter=get_exit_liquidation_list_uncached,
+                         invalidate_timestamp=get_next_block_timestamp_est())
 
 
 @app.route("/exit_liquidation_list")
@@ -427,8 +436,8 @@ def get_exitable_ed25519_keys_uncached():
 
 
 def get_exitable_ed25519_keys_cached():
-    return app.data.get("exitable_ed25519_keys", getter=get_exitable_ed25519_keys_uncached,
-                        invalidate_timestamp=get_next_block_timestamp_est())
+    return app.cache.get("exitable_ed25519_keys", getter=get_exitable_ed25519_keys_uncached,
+                         invalidate_timestamp=get_next_block_timestamp_est())
 
 """
 //////////////////////////////////////////////////////////////
@@ -453,8 +462,8 @@ def get_rewards_signature_uncached(eth_wal: str):
 
 def get_rewards_info_cached():
     # We cache all rewards info for all wallets so we don't need to multiple reads in a short period of time
-    return app.data.get(f"rewards_info", getter=app.db_reader.get_rewards_info,
-                        invalidate_timestamp=get_next_block_timestamp_est())
+    return app.cache.get(f"rewards_info", getter=app.db_reader.get_rewards_info,
+                         invalidate_timestamp=get_next_block_timestamp_est())
 
 
 def get_rewards_info_for_address_cached(eth_wal: str):
@@ -473,9 +482,9 @@ def get_rewards_signature_response(eth_wal: str):
         if rewards == 0:
             return flask.abort(404, f"No rewards available for {eth_wal}")
 
-        return json_response({"rewards": app.data.get(f"rewards-sig-{eth_wal}", getter=get_rewards_signature_uncached,
-                                                      getter_args=eth_wal,
-                                                      invalidate_timestamp=get_next_block_timestamp_est())})
+        return json_response({"rewards": app.cache.get(f"rewards-sig-{eth_wal}", getter=get_rewards_signature_uncached,
+                                                       getter_args=eth_wal,
+                                                       invalidate_timestamp=get_next_block_timestamp_est())})
     except ValueError as e:
         return flask.abort(400, str(e))
 
@@ -483,13 +492,13 @@ def get_rewards_signature_response(eth_wal: str):
 @app.route("/rewards/<eth_wallet:eth_wal>", methods=["GET", "POST"])
 def get_rewards(eth_wal: str):
     if flask.request.method == "GET":
-        return app.data.get(f"rewards-info-response-{eth_wal}", getter=get_rewards_info_response, getter_args=eth_wal,
-                            invalidate_timestamp=get_next_block_timestamp_est())
+        return app.cache.get(f"rewards-info-response-{eth_wal}", getter=get_rewards_info_response, getter_args=eth_wal,
+                             invalidate_timestamp=get_next_block_timestamp_est())
 
     if flask.request.method == "POST":
         try:
-            return app.data.get(f"rewards-sig-response-{eth_wal}", getter=get_rewards_signature_response,
-                                getter_args=eth_wal, invalidate_timestamp=get_next_block_timestamp_est())
+            return app.cache.get(f"rewards-sig-response-{eth_wal}", getter=get_rewards_signature_response,
+                                 getter_args=eth_wal, invalidate_timestamp=get_next_block_timestamp_est())
         except TimeoutError:
             # We don't want to cache a 408 response
             return flask.abort(408)
@@ -523,7 +532,7 @@ def operator_registrations(operator: str):
 
     return json_response(
         {
-            "registrations": app.data.get(
+            "registrations": app.cache.get(
                 f"registrations-op-{operator_bytes}",
                 getter=app.db_reader_registrations.get_registrations_for_operator,
                 getter_args=operator_bytes,
@@ -554,7 +563,7 @@ def sn_pubkey_registrations(sn_pubkey: bytes) -> flask.Response:
     """
     result = json_response(
         {
-            "registrations": app.data.get(
+            "registrations": app.cache.get(
                 f"registration-sn-{sn_pubkey}",
                 getter=app.db_reader_registrations.get_registrations_by_pubkey,
                 getter_args=sn_pubkey,

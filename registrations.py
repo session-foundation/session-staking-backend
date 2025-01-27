@@ -11,7 +11,7 @@ from log import Log
 from registration.read import DBReaderRegistrations
 from registration.validation import check_reg_keys_sigs
 from registration.write import DBWriterRegistrations
-from util.data import DataManager
+from util.cache import Cache
 from util.parse import (
     parse_query_params,
     byte_decoder,
@@ -62,7 +62,7 @@ class App(flask.Flask):
             perf=config.backend.performance_logging,
         )
 
-        self.data = DataManager(stale_time_seconds=config.backend.stale_time_seconds)
+        self.cache = Cache(stale_time_seconds=config.backend.stale_time_seconds)
 
         self.allowed_contract_names = set()
 
