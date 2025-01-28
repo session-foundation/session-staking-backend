@@ -23,8 +23,8 @@ class ABIManager:
         :param abi_dir: The directory where ABI files are stored. Default is 'abis'.
         """
         self.abi_dir = abi_dir
+        abis = self.load_all_abis()
         if db_writer is not None:
-            abis = self.load_all_abis()
             db_writer.write_smart_contract_abis_to_db(abis)
 
     def get_abi(self, contract_name):
