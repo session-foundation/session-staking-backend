@@ -1,8 +1,5 @@
 from web3 import Web3
-
-from log import Log
-from web3client.abi_manager import ABIManager
-from web3client.client import Web3Client
+from ..client import Web3Client
 
 
 class ContractInterface:

@@ -4,11 +4,11 @@ from dataclasses import dataclass
 import eth_utils
 from web3.exceptions import BlockNotFound
 
-from web3client.client import Web3Client
-from web3client.contracts.service_node_contribution import ServiceNodeContributionInterface
-from web3client.contracts.service_node_contribution_factory import ServiceNodeContributionFactory
-from web3client.contracts.service_node_rewards import ServiceNodeRewardsInterface
-from web3client.event_scanner import ProcessedEvent
+from ..web3client.client import Web3Client
+from ..web3client.contracts.service_node_contribution import ServiceNodeContributionInterface
+from ..web3client.contracts.service_node_contribution_factory import ServiceNodeContributionFactory
+from ..web3client.contracts.service_node_rewards import ServiceNodeRewardsInterface
+from ..web3client.event_scanner import ProcessedEvent
 
 
 # TODO: we should be able to remove this once contract_id is always available via rpc.get_service_nodes

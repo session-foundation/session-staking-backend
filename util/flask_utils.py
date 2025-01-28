@@ -3,9 +3,10 @@ import time
 from dataclasses import dataclass
 import flask
 from werkzeug.middleware.proxy_fix import ProxyFix
-from util.cache import Cache
-from log import Log
-from util.parse import hexify
+
+from ..util.cache import Cache
+from ..log import Log
+from ..util.parse import hexify
 
 
 def json_response(vals=None, vals_no_hexify=None):

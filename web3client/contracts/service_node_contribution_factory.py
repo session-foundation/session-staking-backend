@@ -1,6 +1,6 @@
-from web3client.client import Web3Client
-from web3client.contracts.contract import ContractInterface
-from web3client.event_scanner import EventScanner
+from ..client import Web3Client
+from ..contracts.contract import ContractInterface
+from ..event_scanner import EventScanner
 
 
 class ServiceNodeContributionFactory(ContractInterface):

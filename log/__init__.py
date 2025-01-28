@@ -1,7 +1,7 @@
 import logging
 
-from log.perf import PerformanceLogger
-from log.util import add_logging_level
+from ..log.perf import PerformanceLogger
+from ..log.util import add_logging_level
 
 CUSTOM_LOG_LEVELS = {"SILLY": 1, "PERFORMANCE": 69}
 for label, lvl in CUSTOM_LOG_LEVELS.items():

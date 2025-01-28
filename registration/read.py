@@ -1,7 +1,8 @@
 import sqlite3
 from contextlib import closing
-from db.dataclasses import Registration
-from log import Log
+
+from ..db.dataclasses import Registration
+from ..log import Log
 
 class DBReaderRegistrations:
     def __init__(self, db_path: str, log_level: int, perf: bool = False):

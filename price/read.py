@@ -1,7 +1,8 @@
 import sqlite3
 from contextlib import closing
 from attr import dataclass
-from log import Log
+
+from ..log import Log
 
 
 @dataclass

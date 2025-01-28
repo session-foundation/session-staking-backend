@@ -2,8 +2,8 @@ import time
 from dataclasses import dataclass
 
 from web3 import Web3
-from web3client.client import Web3Client
-from web3client.contracts.contract import ContractInterface
+from ..client import Web3Client
+from ..contracts.contract import ContractInterface
 
 
 class ServiceNodeContributionInterface(ContractInterface):

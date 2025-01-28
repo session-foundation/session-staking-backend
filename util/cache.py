@@ -3,7 +3,7 @@ import time
 from copy import copy
 from typing import Optional, Callable
 
-from log import Log
+from ..log import Log
 
 
 class Cache:

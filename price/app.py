@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 from dataclasses import dataclass
 from uwsgidecorators import timer
-from price.coingecko import CoinGeckoTokenPriceRequest
-from price.read import DBReaderPrices, PriceDB
-from price.write import DBWriterPrices
-from util.flask_utils import FlaskApp, FlaskReqLimiter, json_response, FlaskAppConfig
-from db.util import is_db_initialized, init_db
+
+from ..price.coingecko import CoinGeckoTokenPriceRequest
+from ..price.read import DBReaderPrices, PriceDB
+from ..price.write import DBWriterPrices
+from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
+from ..db.util import is_db_initialized, init_db
 
 
 @dataclass

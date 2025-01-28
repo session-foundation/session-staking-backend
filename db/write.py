@@ -2,15 +2,14 @@ import json
 import sqlite3
 import time
 from contextlib import closing
-
 from web3 import Web3
 
-from staking.arbitrum import ContributionContractDetails
-from db.dataclasses import RewardsInfo, DBNodeExit
-from log import Log
-from oxen.rpc import ServiceNode, NetworkInfo
-from web3client.abi_manager import ABIData
-from web3client.event_scanner import ProcessedEvent
+from ..staking.arbitrum import ContributionContractDetails
+from ..db.dataclasses import RewardsInfo, DBNodeExit
+from ..log import Log
+from ..oxen.rpc import ServiceNode, NetworkInfo
+from ..web3client.abi_manager import ABIData
+from ..web3client.event_scanner import ProcessedEvent
 
 
 class DBWriter:

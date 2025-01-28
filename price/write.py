@@ -1,7 +1,8 @@
 import sqlite3
 from contextlib import closing
-from log import Log
-from price.read import PriceDB
+
+from ..log import Log
+from ..price.read import PriceDB
 
 
 class DBWriterPrices:

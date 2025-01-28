@@ -1,7 +1,8 @@
 import logging
 from typing import TypedDict
-from oxen.omq import FutureJSON, omq_connection, RPCUsageTracker
 from dataclasses import dataclass
+
+from ..oxen.omq import FutureJSON, omq_connection, RPCUsageTracker
 
 
 class ServiceNodeContributor(TypedDict):

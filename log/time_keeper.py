@@ -2,8 +2,8 @@ import logging
 import statistics
 import time
 
-from log import PerformanceLogger
-from util import format_seconds, format_ms
+from ..log import PerformanceLogger
+from ..util import format_seconds, format_ms
 
 
 class TimeKeeper:

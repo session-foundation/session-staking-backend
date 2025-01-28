@@ -1,4 +1,4 @@
-from web3client.contracts.token import TokenInterface
+from ..contracts.token import TokenInterface
 
 def test_token_decimals():
     assert TokenInterface.decimals == 9

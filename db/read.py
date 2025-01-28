@@ -1,11 +1,11 @@
 import sqlite3
 from contextlib import closing
 
-from db.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
+from ..db.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
     DBContributionContractContribution, SmartContractABI, ArbitrumInfo
-from log import Log
-from util.parse import eth_format
-from web3client.event_scanner import ProcessedEvent
+from ..log import Log
+from ..util.parse import eth_format
+from ..web3client.event_scanner import ProcessedEvent
 
 
 class DBReader:

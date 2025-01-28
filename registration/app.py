@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
+from dataclasses import dataclass
 import eth_utils
-from util.flask_utils import FlaskApp, FlaskReqLimiter, json_response
 from werkzeug.middleware.proxy_fix import ProxyFix
-from db.util import is_db_initialized, init_db
-from registration.read import DBReaderRegistrations
-from registration.validation import check_reg_keys_sigs
-from registration.write import DBWriterRegistrations
-from util.parse import (
+
+from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
+from ..db.util import is_db_initialized, init_db
+from ..registration.read import DBReaderRegistrations
+from ..registration.validation import check_reg_keys_sigs
+from ..registration.write import DBWriterRegistrations
+from ..util.parse import (
     parse_query_params,
     byte_decoder,
     EthConverter,

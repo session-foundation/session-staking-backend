@@ -3,7 +3,7 @@ import logging
 import eth_utils
 from web3 import Web3, HTTPProvider
 from web3.contract.contract import ContractFunction
-from web3client.abi_manager import ABIManager
+from ..web3client.abi_manager import ABIManager
 
 
 class Web3Client:

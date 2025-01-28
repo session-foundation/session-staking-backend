@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 from uwsgidecorators import timer
-from db.snapshot import DBSnapshot
-from util.flask_utils import FlaskApp
+
+from ..db.snapshot import DBSnapshot
+from ..util.flask_utils import FlaskApp
 
 
 class App(FlaskApp):

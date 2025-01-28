@@ -1,7 +1,7 @@
 import sqlite3
 from contextlib import closing
 
-from log import Log
+from ..log import Log
 
 
 class DBWriterRegistrations:
