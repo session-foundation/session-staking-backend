@@ -5,6 +5,8 @@ from web3client.contracts.contract import ContractInterface
 class TokenInterface(ContractInterface):
     abi_name = "Token"
 
+    decimals = 9
+
     def __init__(self, web3_client: Web3Client, contract_address: str):
         super().__init__(web3_client, contract_address, TokenInterface.abi_name)
 
@@ -25,3 +27,20 @@ class TokenInterface(ContractInterface):
         :return: balance
         """
         return self.contract.functions.balanceOf(address).call()
+
+    @staticmethod
+    def to_atomic(amount: float | int) -> int:
+        """
+        Converts a float or int to an atomic amount
+        """
+        print(TokenInterface.decimals)
+        print(amount)
+        print((amount * 10 ** TokenInterface.decimals))
+        return int(amount * 10 ** TokenInterface.decimals)
+
+    @staticmethod
+    def from_atomic(amount: int) -> float:
+        """
+        Converts an atomic amount to a float
+        """
+        return amount / 10 ** TokenInterface.decimals
