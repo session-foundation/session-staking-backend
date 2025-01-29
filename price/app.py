@@ -50,15 +50,17 @@ class App(FlaskApp):
             log_level=config.log_level,
             perf=config.enable_perf,
         )
-        self.token_price_request = CoinGeckoTokenPriceRequest(
-            logger=self.log,
-            key=config.coingecko_api_key,
-            url=config.coingecko_api_url,
-            token_ids=config.coingecko_api_token_ids,
-            currencies=config.coingecko_api_currencies,
-            include_market_cap=True,
-            include_last_updated_at=True,
-        )
+
+        if config.coingecko_api_url:
+            self.token_price_request = CoinGeckoTokenPriceRequest(
+                logger=self.log,
+                key=config.coingecko_api_key,
+                url=config.coingecko_api_url,
+                token_ids=config.coingecko_api_token_ids,
+                currencies=config.coingecko_api_currencies,
+                include_market_cap=True,
+                include_last_updated_at=True,
+            )
 
         self.price_poll_rate_seconds = config.coingecko_api_rate_poll_rate_seconds if config.coingecko_api_rate_poll_rate_seconds is not None else 0
 
@@ -137,7 +139,7 @@ def create_app(config: PriceAppConfig) -> App:
             "price": app.get_token_price_info(token)
         })
 
-    if app.price_poll_rate_seconds > 0:
+    if app.price_poll_rate_seconds > 0 and config.coingecko_api_url:
         app.log.info("Polling for price info every {} seconds".format(app.price_poll_rate_seconds))
 
         @timer(app.price_poll_rate_seconds)

@@ -13,7 +13,7 @@ class Web3Client:
         caller_address: str | None,
         private_key: str | None,
         logger: logging,
-        abi_manager: ABIManager = ABIManager(),
+        abi_manager: ABIManager = None
     ):
         """
         Initialize the web3 client.
@@ -22,6 +22,9 @@ class Web3Client:
         :param caller_address: Address of the caller.
         :param private_key: Private key of the caller.
         """
+        if abi_manager is None:
+            abi_manager = ABIManager()
+
         self.web3 = Web3(HTTPProvider(endpoint_uri=provider_urls[0]))
         self.provider_url = provider_urls[0]
         self.abi_manager = abi_manager
