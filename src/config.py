@@ -12,3 +12,6 @@ from src.config_defaults import *
 
 # backend              = stagenet_backend
 # backend.provider_url = 'tcp://127.0.0.1:6786'
+
+# backend.log_level = CUSTOM_LOG_LEVELS["SILLY"]
+# backend.log_level = logging.INFO

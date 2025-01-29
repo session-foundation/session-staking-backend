@@ -35,7 +35,8 @@ class Backend:
     rpc_api:                        str = ""
     rpc_api_cache:                  int = 2
     rpc_api_usage_logging:         bool = False
-    rpc_api_usage_logging_interval: int = 600
+    rpc_api_usage_logging_interval: int = 300
+
     """
     REGISTRATION CONFIG
     """
