@@ -1,17 +1,8 @@
 import sqlite3
 from contextlib import closing
-from attr import dataclass
 
+from .dataclasses import PriceDB
 from ..log import Log
-
-
-@dataclass
-class PriceDB:
-    token: str
-    currency: str
-    price: float
-    market_cap: float
-    updated_at: int
 
 
 class DBReaderPrices:

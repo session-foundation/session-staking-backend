@@ -2,7 +2,6 @@ import logging
 
 import config
 from log import Log
-from oxen.omq import omq_connection
 from oxen.rpc import OxenRPC
 from util import is_not_empty_string, valid_address_assertion
 from web3client.client import Web3Client

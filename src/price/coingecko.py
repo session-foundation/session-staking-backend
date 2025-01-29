@@ -1,7 +1,7 @@
 import logging
 import requests
 
-from ..price.read import PriceDB
+from .dataclasses import PriceDB
 
 
 class CoinGeckoTokenPriceRequest:

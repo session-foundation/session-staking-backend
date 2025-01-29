@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from dataclasses import dataclass
 import eth_utils
-from werkzeug.middleware.proxy_fix import ProxyFix
 
 from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
 from ..db.util import is_db_initialized, init_db
@@ -12,52 +11,50 @@ from ..util.parse import (
     parse_query_params,
     byte_decoder,
     EthConverter,
-    hexify,
     Hex64Converter,
     raw_eth_addr,
 )
+@dataclass
+class RegistrationAppConfig(FlaskAppConfig):
+    # Flask App Config
+    sqlite_db: str = None
+    sqlite_schema: str = None
 
+    # Route Config
+    coingecko_api_rate_poll_rate_seconds: int = None
+    default_token: str = None
+    default_currency: str = None
 
 class App(FlaskApp):
-    def __init__(self, config):
-        name = config.backend.registration_api_name if config.backend.registration_api_name else __name__
-        super().__init__(name, enable_perf=config.backend.performance_logging,
-                         log_level=config.backend.log_level,
-                         cache_stale_time_seconds=config.backend.stale_time_seconds)
+    def __init__(self, config: RegistrationAppConfig):
+        super().__init__(config)
 
-        if not is_db_initialized(config.backend.registration_sqlite_db):
+        if not is_db_initialized(config.sqlite_db):
             self.log.info(
                 "Initializing database {} with schema {}".format(
-                    config.backend.registration_sqlite_db, config.backend.registration_sqlite_schema
+                    config.sqlite_db, config.sqlite_schema
                 )
             )
             init_db(
-                config.backend.registration_sqlite_db, config.backend.registration_sqlite_schema
+                config.sqlite_db, config.sqlite_schema
             )
 
         self.db_reader = DBReaderRegistrations(
-            db_path=config.backend.registration_sqlite_db,
-            log_level=config.backend.log_level,
-            perf=config.backend.performance_logging,
+            db_path=config.sqlite_db,
+            log_level=config.log_level,
+            perf=config.enable_perf,
         )
         self.db_writer = DBWriterRegistrations(
-            db_path=config.backend.registration_sqlite_db,
-            log_level=config.backend.log_level,
-            perf=config.backend.performance_logging,
+            db_path=config.sqlite_db,
+            log_level=config.log_level,
+            perf=config.enable_perf,
         )
 
         self.allowed_contract_names = set()
-        self.log.info(
-            f"IP Rate limit: {config.backend.registration_api_rate_limit} per {config.backend.registration_api_rate_limit_period} seconds")
 
 
-def create_app(config) -> App:
+def create_app(config: RegistrationAppConfig) -> App:
     app = App(config)
-
-    # Enables more reliable proxy pass through for rate limiting
-    app.wsgi_app = ProxyFix(app.wsgi_app)
-    app.req_limiter = FlaskReqLimiter(max_reqs_per_sec=config.backend.registration_api_rate_limit,
-                                      rate_limit_period=config.backend.registration_api_rate_limit_period)
 
     @app.before_request
     def rate_limit():

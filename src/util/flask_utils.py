@@ -80,8 +80,9 @@ class FlaskReqLimiter:
 
 class FlaskApp(flask.Flask):
     def __init__(self, config: FlaskAppConfig):
-        super().__init__(config.name)
-        log = Log(config.name, enable_perf=config.enable_perf)
+        name = config.name if config.name else __name__
+        super().__init__(name)
+        log = Log(name, enable_perf=config.enable_perf)
         log.set_level(config.log_level)
         self.log = log.logger
 

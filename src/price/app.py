@@ -2,10 +2,11 @@
 from dataclasses import dataclass
 from uwsgidecorators import timer
 
-from ..price.coingecko import CoinGeckoTokenPriceRequest
-from ..price.read import DBReaderPrices, PriceDB
-from ..price.write import DBWriterPrices
-from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
+from src.util.flask_utils import FlaskApp, json_response, FlaskAppConfig
+from .coingecko import CoinGeckoTokenPriceRequest
+from .read import DBReaderPrices
+from .dataclasses import PriceDB
+from .write import DBWriterPrices
 from ..db.util import is_db_initialized, init_db
 
 
