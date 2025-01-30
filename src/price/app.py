@@ -68,6 +68,7 @@ class App(FlaskApp):
 
         self.price_poll_rate_seconds = config.coingecko_api_rate_poll_rate_seconds if config.coingecko_api_rate_poll_rate_seconds is not None else 0
 
+
     @staticmethod
     def get_token_price_cache_key(token: str):
         return f"price-{token}-all"
@@ -75,21 +76,24 @@ class App(FlaskApp):
     def get_token_info_cached(self, token: str):
         key = App.get_token_price_cache_key(token)
 
-        data: dict[str, PriceDB] | None = self.cache.get_cached_only(key)
+        data: list[PriceDB] | None = self.cache.get_cached_only(key)
 
         if data:
             return data
 
         data = self.db_reader_prices.get_latest_prices(token)
 
-        updated_at = max(price.updated_at for price in data.values())
+        updated_at = data[0].updated_at
 
         stale_time = updated_at + self.price_poll_rate_seconds
         self.cache.set_cache_value(key, data, invalidate_timestamp=stale_time)
         return data
 
     def get_price_for_token_uncached(self, params: [str, str]):
-        return self.get_token_info_cached(params[0]).get(params[1])
+        for price in self.get_token_info_cached(params[0]):
+            if price.currency == params[1]:
+                return price
+        return None
 
     def get_price_for_token_cached(self, token: str, currency: str) -> PriceDB | None:
         return self.cache.get(f"price-{token}-{currency}", getter=self.get_price_for_token_uncached,

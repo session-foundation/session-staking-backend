@@ -29,15 +29,12 @@ class DBReaderPrices(DBReader):
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
-                    SELECT * FROM prices WHERE token = ? ORDER BY updated_at DESC
+                    SELECT * FROM prices WHERE token = ? ORDER BY updated_at DESC LIMIT 100
                     """,
                     (token,),
                 )
-                prices_lst = [PriceDB(*price) for price in cursor.fetchall()]
 
-                prices = {
-                    price.currency: price for price in prices_lst
-                }
+                prices = [PriceDB(*price) for price in cursor.fetchall()]
 
                 self.log.debug("Prices: {}".format(len(prices)))
                 self.log.perf.end("get_latest_prices")
