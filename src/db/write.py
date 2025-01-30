@@ -1,6 +1,6 @@
 import sqlite3
 
-from src.log import Log
+from ..log import Log
 
 class DBWriter:
     def __init__(self, db_path: str, log_level: int, perf: bool = False):

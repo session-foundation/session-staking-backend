@@ -2,7 +2,7 @@ import sqlite3
 from contextlib import closing
 
 from ..db.read import DBReader
-from ..staking.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
+from .dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
     DBContributionContractContribution, SmartContractABI, ArbitrumInfo
 from ..util.parse import eth_format
 from ..web3client.event_scanner import ProcessedEvent

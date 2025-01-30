@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from uwsgidecorators import timer
 
-from src.util.flask_utils import FlaskApp, json_response, FlaskAppConfig
+from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
 from .coingecko import CoinGeckoTokenPriceRequest
 from .read import DBReaderPrices
 from .dataclasses import PriceDB

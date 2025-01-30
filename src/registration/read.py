@@ -1,7 +1,7 @@
 import sqlite3
 from contextlib import closing
 
-from src.staking.dataclasses import Registration
+from ..staking.dataclasses import Registration
 from ..log import Log
 
 class DBReaderRegistrations:

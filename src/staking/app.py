@@ -7,8 +7,8 @@ from eth_typing import ChecksumAddress
 from uwsgidecorators import timer
 from werkzeug.exceptions import GatewayTimeout
 
-from ..staking.dataclasses import ArbitrumInfo
-from ..staking.read import DBReaderStaking
+from .dataclasses import ArbitrumInfo
+from .read import DBReaderStaking
 from ..oxen.rpc import OxenRPC
 from ..registration.read import DBReaderRegistrations
 from ..util.flask_utils import FlaskApp, json_response

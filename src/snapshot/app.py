@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from uwsgidecorators import timer
 
-from src.staking.snapshot import DBSnapshot
+from ..staking.snapshot import DBSnapshot
 from ..util.flask_utils import FlaskApp
 
 
