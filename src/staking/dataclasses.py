@@ -2,8 +2,8 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-from src.util.parse import eth_format
-from src.web3client.event_scanner import ProcessedEvent
+from ..util.parse import eth_format
+from ..web3client.event_scanner import ProcessedEvent
 
 
 @dataclass

@@ -4,13 +4,13 @@ import time
 from contextlib import closing
 from web3 import Web3
 
-from src.db.write import DBWriter
-from src.staking.arbitrum import ContributionContractDetails
-from src.staking.dataclasses import RewardsInfo, DBNodeExit
-from src.log import Log
-from src.oxen.rpc import ServiceNode, NetworkInfo
-from src.web3client.abi_manager import ABIData
-from src.web3client.event_scanner import ProcessedEvent
+from ..db.write import DBWriter
+from ..staking.arbitrum import ContributionContractDetails
+from ..staking.dataclasses import RewardsInfo, DBNodeExit
+from ..log import Log
+from ..oxen.rpc import ServiceNode, NetworkInfo
+from ..web3client.abi_manager import ABIData
+from ..web3client.event_scanner import ProcessedEvent
 
 
 class DBWriterStaking(DBWriter):

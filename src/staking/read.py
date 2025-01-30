@@ -1,11 +1,11 @@
 import sqlite3
 from contextlib import closing
 
-from src.db.read import DBReader
-from src.staking.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
+from ..db.read import DBReader
+from ..staking.dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
     DBContributionContractContribution, SmartContractABI, ArbitrumInfo
-from src.util.parse import eth_format
-from src.web3client.event_scanner import ProcessedEvent
+from ..util.parse import eth_format
+from ..web3client.event_scanner import ProcessedEvent
 
 
 class DBReaderStaking(DBReader):

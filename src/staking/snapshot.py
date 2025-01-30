@@ -1,7 +1,7 @@
 import os
 import sqlite3
 
-from src.log import Log
+from ..log import Log
 
 
 class DBSnapshot:
