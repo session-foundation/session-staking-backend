@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from dataclasses import dataclass
-from uwsgidecorators import timer
 
 from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
 from .coingecko import CoinGeckoTokenPriceRequest
@@ -12,6 +11,9 @@ from ..db.util import is_db_initialized, init_db
 
 @dataclass
 class PriceAppConfig(FlaskAppConfig):
+
+    enable_price_fetcher: bool = False
+
     # Flask App Config
     sqlite_db: str = None
     sqlite_schema: str = None
@@ -31,15 +33,19 @@ class App(FlaskApp):
         super().__init__(config)
         self.app_config = config
 
-        if not is_db_initialized(config.sqlite_db) and config.coingecko_api_url:
-            self.log.info(
-                "Initializing database {} with schema {}".format(
-                    config.sqlite_db, config.sqlite_schema
-                )
+        if config.enable_price_fetcher:
+            self.log.info(f"Price fetcher enabled, fetching from {config.coingecko_api_url}")
+            if is_db_initialized(config.sqlite_db):
+                self.log.info(f"Initializing database {config.sqlite_db} with schema {config.sqlite_schema}")
+                init_db(config.sqlite_db, config.sqlite_schema)
+            self.db_writer_prices = DBWriterPrices(
+                db_path=config.sqlite_db,
+                log_level=config.log_level,
+                perf=config.enable_perf,
             )
-            init_db(
-                config.sqlite_db, config.sqlite_schema
-            )
+        else:
+            self.log.info("Price fetcher disabled. No API url provided.")
+
 
         self.db_reader_prices = DBReaderPrices(
             db_path=config.sqlite_db,
@@ -47,14 +53,7 @@ class App(FlaskApp):
             perf=config.enable_perf,
         )
 
-        if config.coingecko_api_url:
-            self.db_writer_prices = DBWriterPrices(
-                db_path=config.sqlite_db,
-                log_level=config.log_level,
-                perf=config.enable_perf,
-            )
-
-        if config.coingecko_api_url:
+        if config.enable_price_fetcher:
             self.token_price_request = CoinGeckoTokenPriceRequest(
                 logger=self.log,
                 key=config.coingecko_api_key,
@@ -142,8 +141,14 @@ def create_app(config: PriceAppConfig) -> App:
             "price": app.get_token_price_info(token)
         })
 
-    if app.price_poll_rate_seconds > 0 and config.coingecko_api_url:
+    if config.enable_price_fetcher:
         app.log.info("Polling for price info every {} seconds".format(app.price_poll_rate_seconds))
+        try:
+            from uwsgidecorators import timer
+        except ModuleNotFoundError as e:
+            if e.name == "uwsgi":
+                app.log.error("uwsgi is not installed, run with uwsgi or disable price polling")
+            raise e
 
         @timer(app.price_poll_rate_seconds)
         def fetch_token_price_info(signum):

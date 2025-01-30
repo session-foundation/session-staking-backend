@@ -87,6 +87,7 @@ class Backend:
     PRICE FETCHER CONFIG
     """
     prices_api_name:                    str = "prices_api"
+    enable_price_fetcher:               bool = False
     coingecko_api_key:                  str = ""
     coingecko_api_url:                  str = "https://api.coingecko.com/api"
     coingecko_api_token_ids:      list[str] = ["ethereum", "chainflip"]
