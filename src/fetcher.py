@@ -10,14 +10,14 @@ from staking.arbitrum import (
     update_contribution_contract_details, batch_populate_events_with_block_timestamps, populate_events_with_main_arg,
 )
 from config_validate import validate_config
-from db.dataclasses import RewardsInfo, DBNodeExit
+from src.staking.dataclasses import RewardsInfo, DBNodeExit
 from db.util import (
     assert_all_dict_values_are_within_sqlite_integer_range,
     is_db_initialized,
     init_db,
 )
-from db.read import DBReader
-from db.write import DBWriter
+from src.staking.read import DBReaderStaking
+from src.staking.write import DBWriterStaking
 from log import Log
 from oxen.rpc import ServiceNode, OxenRPC, NetworkInfo
 from util import format_seconds
@@ -65,12 +65,12 @@ class App:
             )
             init_db(config.backend.sqlite_db, config.backend.sqlite_schema)
 
-        self.db_reader = DBReader(
+        self.db_reader = DBReaderStaking(
             db_path=config.backend.sqlite_db,
             log_level=config.backend.log_level,
             perf=config.backend.performance_logging,
         )
-        self.db_writer = DBWriter(
+        self.db_writer = DBWriterStaking(
             db_path=config.backend.sqlite_db,
             log_level=config.backend.log_level,
             perf=config.backend.performance_logging,

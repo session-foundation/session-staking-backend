@@ -31,7 +31,7 @@ class App(FlaskApp):
         super().__init__(config)
         self.app_config = config
 
-        if not is_db_initialized(config.sqlite_db):
+        if not is_db_initialized(config.sqlite_db) and config.coingecko_api_url:
             self.log.info(
                 "Initializing database {} with schema {}".format(
                     config.sqlite_db, config.sqlite_schema
@@ -46,11 +46,13 @@ class App(FlaskApp):
             log_level=config.log_level,
             perf=config.enable_perf,
         )
-        self.db_writer_prices = DBWriterPrices(
-            db_path=config.sqlite_db,
-            log_level=config.log_level,
-            perf=config.enable_perf,
-        )
+
+        if config.coingecko_api_url:
+            self.db_writer_prices = DBWriterPrices(
+                db_path=config.sqlite_db,
+                log_level=config.log_level,
+                perf=config.enable_perf,
+            )
 
         if config.coingecko_api_url:
             self.token_price_request = CoinGeckoTokenPriceRequest(

@@ -1,19 +1,17 @@
-import sqlite3
 from contextlib import closing
 
 from .dataclasses import PriceDB
-from ..log import Log
+from ..db.write import DBWriter
 
 
-class DBWriterPrices:
+class DBWriterPrices(DBWriter):
     def __init__(self, db_path: str, log_level: int, perf: bool = False):
-        self.db_path = db_path
-        self.log = Log("db_writer", log_level, enable_perf=perf).logger
+        super().__init__(db_path, log_level, perf)
 
     def write_prices_to_db(self, prices: list[PriceDB]):
         self.log.perf.start("write_prices_to_db")
 
-        with closing(sqlite3.connect(self.db_path)) as connection:
+        with closing(self.connect()) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Inserting {} prices".format(len(prices)))
@@ -46,7 +44,7 @@ class DBWriterPrices:
 
     def write_registration_to_db(self, registration):
         self.log.perf.start("write_registration_to_db")
-        with closing(sqlite3.connect(self.db_path)) as connection:
+        with closing(self.connect()) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Inserting {} registration".format(len(registration)))

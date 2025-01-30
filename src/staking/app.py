@@ -7,8 +7,8 @@ from eth_typing import ChecksumAddress
 from uwsgidecorators import timer
 from werkzeug.exceptions import GatewayTimeout
 
-from ..db.dataclasses import ArbitrumInfo
-from ..db.read import DBReader
+from src.staking.dataclasses import ArbitrumInfo
+from src.staking.read import DBReaderStaking
 from ..oxen.rpc import OxenRPC
 from ..registration.read import DBReaderRegistrations
 from ..util.flask_utils import FlaskApp, json_response
@@ -22,7 +22,7 @@ class App(FlaskApp):
                          log_level=config.backend.log_level, log_level_generic=config.backend.log_level_generic,
                          cache_stale_time_seconds=config.backend.stale_time_seconds)
 
-        self.db_reader = DBReader(
+        self.db_reader = DBReaderStaking(
             db_path=config.backend.sqlite_db,
             log_level=config.backend.log_level,
             perf=config.backend.performance_logging,

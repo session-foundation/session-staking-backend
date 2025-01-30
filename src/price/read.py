@@ -1,18 +1,16 @@
-import sqlite3
 from contextlib import closing
 
 from .dataclasses import PriceDB
-from ..log import Log
+from ..db.read import DBReader
 
 
-class DBReaderPrices:
+class DBReaderPrices(DBReader):
     def __init__(self, db_path: str, log_level: int, perf: bool = False):
-        self.db_path = db_path
-        self.log = Log("db_reader", log_level, enable_perf=perf).logger
+        super().__init__(db_path, log_level, perf)
 
     def get_latest_price(self, token: str, currency: str):
         self.log.perf.start("get_latest_price")
-        with closing(sqlite3.connect(self.db_path)) as connection:
+        with closing(self.connect()) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -27,7 +25,7 @@ class DBReaderPrices:
 
     def get_latest_prices(self, token: str):
         self.log.perf.start("get_latest_prices")
-        with closing(sqlite3.connect(self.db_path)) as connection:
+        with closing(self.connect()) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -47,7 +45,7 @@ class DBReaderPrices:
 
     def get_unique_currencies(self, token: str):
         self.log.perf.start("get_unique_currencies")
-        with closing(sqlite3.connect(self.db_path)) as connection:
+        with closing(self.connect()) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
