@@ -17,20 +17,20 @@ class Cache:
         if ttl is None or ttl < 0:
             ttl = self.default_stale_time_seconds
         now = time.time()
-        if key in self.store and self.cache_expiry[key] > now:
-            return self.store[key]
+
+        if key in self.store and self.cache_expiry.get(key, 0) > now:
+            return self.store.get(key)
 
         self.clear_stale(now)
 
         data = getter(getter_args) if getter_args is not None else getter()
-        self.store[key] = data
-        self.cache_expiry[key] = min(now + ttl, invalidate_timestamp) if invalidate_timestamp is not None else now + ttl
+        self.set_cache_value(key, data, ttl, invalidate_timestamp)
         return data
 
     def get_cached_only(self, key: str):
         now = time.time()
-        if key in self.store and self.cache_expiry[key] > now:
-            return self.store[key]
+        if key in self.store and self.cache_expiry.get(key, 0) > now:
+            return self.store.get(key)
         return None
 
     def set_cache_value(self, key: str, data=None, ttl=None, invalidate_timestamp=None):
@@ -39,7 +39,8 @@ class Cache:
 
         now = time.time()
         self.store[key] = data
-        self.cache_expiry[key] = min(now + ttl, invalidate_timestamp) if invalidate_timestamp is not None else now + ttl
+        expire = min(now + ttl, invalidate_timestamp) if invalidate_timestamp is not None else now + ttl
+        self.set_expiry_timestamp(key, expire)
 
     def set_expiry_ttl(self, key: str, ttl: int):
         self.cache_expiry[key] = time.time() + ttl
@@ -48,7 +49,7 @@ class Cache:
         self.cache_expiry[key] = timestamp
 
     def get_stale_timestamp(self, key: str):
-        return self.cache_expiry[key]
+        return self.cache_expiry.get(key, 0)
 
     def clear_stale(self, now):
         # NOTE: must be a copy as the dictionary is modified during iteration
