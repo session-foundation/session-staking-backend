@@ -34,12 +34,15 @@ class Cache:
         return None
 
     def set_cache_value(self, key: str, data=None, ttl=None, invalidate_timestamp=None):
-        if ttl is None or ttl < 0:
-            ttl = self.default_stale_time_seconds
-
         now = time.time()
+        if invalidate_timestamp is None:
+            if ttl is None or ttl < 0:
+                ttl = self.default_stale_time_seconds
+            expire = now + ttl
+        else:
+            expire = invalidate_timestamp
+
         self.store[key] = data
-        expire = min(now + ttl, invalidate_timestamp) if invalidate_timestamp is not None else now + ttl
         self.set_expiry_timestamp(key, expire)
 
     def set_expiry_ttl(self, key: str, ttl: int):
