@@ -9,8 +9,8 @@ from ..web3client.event_scanner import ProcessedEvent
 
 
 class DBReaderStaking(DBReader):
-    def __init__(self, db_path: str, log_level: int, perf: bool = False):
-        super().__init__(db_path, log_level, perf)
+    def __init__(self, db_path: str, log_level: int, perf: bool = False, disable_db_file_rewrite: bool = False):
+        super().__init__(db_path, log_level, perf, disable_db_file_rewrite)
 
     def get_last_fetched_network_block_height(self) -> int:
         self.log.perf.start("get_last_fetched_network_block_height")

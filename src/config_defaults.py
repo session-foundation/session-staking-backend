@@ -27,6 +27,8 @@ class Backend:
     sqlite_schema:                  str = "db/schema.sql"
     rpc_shared:               list[str] = ""
     rpc_shared_cache:               int = 2
+    disable_db_file_rewrite:       bool = False
+
 
     """
     API CONFIG

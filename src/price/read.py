@@ -5,8 +5,8 @@ from ..db.read import DBReader
 
 
 class DBReaderPrices(DBReader):
-    def __init__(self, db_path: str, log_level: int, perf: bool = False):
-        super().__init__(db_path, log_level, perf)
+    def __init__(self, db_path: str, log_level: int, perf: bool = False, disable_db_file_rewrite: bool = False):
+        super().__init__(db_path, log_level, perf, disable_db_file_rewrite)
 
     def get_latest_price(self, token: str, currency: str):
         self.log.perf.start("get_latest_price")

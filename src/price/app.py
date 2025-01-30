@@ -15,6 +15,7 @@ class PriceAppConfig(FlaskAppConfig):
     enable_price_fetcher: bool = False
 
     # Flask App Config
+    disable_db_file_rewrite: bool = False
     sqlite_db: str = None
     sqlite_schema: str = None
     coingecko_api_key: str = None
@@ -51,6 +52,7 @@ class App(FlaskApp):
             db_path=config.sqlite_db,
             log_level=config.log_level,
             perf=config.enable_perf,
+            disable_db_file_rewrite=config.disable_db_file_rewrite,
         )
 
         if config.enable_price_fetcher:

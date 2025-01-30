@@ -31,6 +31,7 @@ class App(FlaskApp):
             db_path=config.backend.registration_sqlite_db,
             log_level=config.backend.log_level,
             perf=config.backend.performance_logging,
+            disable_db_file_rewrite=config.backend.disable_db_file_rewrite,
         )
 
         rpc_url = config.backend.rpc_api if config.backend.rpc_api else config.backend.rpc_shared
