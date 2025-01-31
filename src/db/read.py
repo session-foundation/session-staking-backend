@@ -7,11 +7,8 @@ class DBReader:
         self.log = Log("db_reader", log_level, enable_perf=perf).logger
 
         if not disable_db_file_rewrite:
-            if not db_path.startswith("file://"):
-                if db_path.startswith("/"):
-                    db_path = "file:/" + db_path
-                else:
-                    db_path = "file://" + db_path
+            if not db_path.startswith("file:"):
+                db_path = "file:" + db_path
 
             if not db_path.endswith("?mode=ro"):
                 db_path = db_path + "?mode=ro"
