@@ -25,7 +25,7 @@ def json_response(vals=None, vals_no_hexify=None):
     if vals_no_hexify is None:
         vals_no_hexify = {}
 
-    return flask.jsonify({**vals, **vals_no_hexify, "t": time.time()})
+    return flask.jsonify({**vals, **vals_no_hexify, "t": int(time.time())})
 
 
 @dataclass
