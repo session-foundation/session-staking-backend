@@ -64,8 +64,18 @@ class Web3Client:
                 call_function, private_key=self.private_key
             )
 
+            raw_transaction = None
+            try:
+                raw_transaction = signed_tx.raw_transaction
+            except Exception as e:
+                raw_transaction = signed_tx.rawTransaction
+                logging.warning("raw_transaction is deprecated, using rawTransaction instead")
+
+            if raw_transaction is None:
+                raise ValueError("raw_transaction is None")
+
             # Send transaction
-            send_tx = self.web3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            send_tx = self.web3.eth.send_raw_transaction(raw_transaction)
 
             # Wait for transaction receipt
             tx_hash = self.web3.eth.wait_for_transaction_receipt(send_tx).get("transactionHash")
