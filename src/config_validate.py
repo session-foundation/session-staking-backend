@@ -1,10 +1,11 @@
 import logging
 
-import config
-from log import Log
-from oxen.rpc import OxenRPC
-from util import is_not_empty_string, valid_address_assertion
-from web3client.client import Web3Client
+from . import config
+from .log import Log
+from .oxen.rpc import OxenRPC
+from .util import is_not_empty_string, valid_address_assertion
+from .web3client.abi_manager import ABIManager
+from .web3client.client import Web3Client
 
 
 def validate_config(conf: config):

@@ -3,37 +3,37 @@ import json
 import subprocess
 import time
 
-import config
-from staking.arbitrum import (
+from ..staking.arbitrum import (
     get_service_node_rewards_contract_id_map,
     get_new_contribution_contracts,
     update_contribution_contract_details, batch_populate_events_with_block_timestamps, populate_events_with_main_arg,
 )
-from config_validate import validate_config
-from .staking.dataclasses import RewardsInfo, DBNodeExit
-from db.util import (
+from ..config_validate import validate_config
+from .. import config
+from ..staking.dataclasses import RewardsInfo, DBNodeExit
+from ..db.util import (
     assert_all_dict_values_are_within_sqlite_integer_range,
     is_db_initialized,
     init_db,
 )
-from .staking.read import DBReaderStaking
-from .staking.write import DBWriterStaking
-from log import Log
-from oxen.rpc import ServiceNode, OxenRPC, NetworkInfo
-from util import format_seconds
-from log.time_keeper import TimeKeeper
-from util.parse import parse_bls_pubkey
-from web3client.abi_manager import ABIManager
-from web3client.client import Web3Client
-from web3client.contracts.reward_rate_pool import RewardRatePoolInterface
-from web3client.contracts.service_node_contribution import (
+from ..staking.read import DBReaderStaking
+from ..staking.write import DBWriterStaking
+from ..log import Log
+from ..oxen.rpc import ServiceNode, OxenRPC, NetworkInfo
+from ..util import format_seconds
+from ..log.time_keeper import TimeKeeper
+from ..util.parse import parse_bls_pubkey
+from ..web3client.abi_manager import ABIManager
+from ..web3client.client import Web3Client
+from ..web3client.contracts.reward_rate_pool import RewardRatePoolInterface
+from ..web3client.contracts.service_node_contribution import (
     ServiceNodeContributionInterface,
 )
-from web3client.contracts.service_node_contribution_factory import (
+from ..web3client.contracts.service_node_contribution_factory import (
     ServiceNodeContributionFactory,
 )
-from web3client.contracts.service_node_rewards import ServiceNodeRewardsInterface
-from web3client.contracts.token import TokenInterface
+from ..web3client.contracts.service_node_rewards import ServiceNodeRewardsInterface
+from ..web3client.contracts.token import TokenInterface
 
 
 class App:
@@ -589,6 +589,3 @@ class App:
 
         return node_add_timestamps, node_last_added_timestamps
 
-
-app = App(config.backend.fetcher_name if config.backend.fetcher_name else __name__)
-app.run()
