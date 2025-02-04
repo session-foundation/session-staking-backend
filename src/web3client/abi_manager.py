@@ -13,9 +13,9 @@ class ABIData:
 
 class ABIManager:
 
-    cache = {}
+    cache: dict[str, ABIData] = {}
 
-    def __init__(self, db_writer=None, abi_dir="web3client/abis"):
+    def __init__(self, db_writer=None, abi_dir="src/web3client/abis"):
         """
         Initializes the ABIManager with the directory containing ABI JSON files.
 
@@ -32,7 +32,7 @@ class ABIManager:
         Gets the ABI for a contract.
         """
         if contract_name in self.cache:
-            return self.cache[contract_name]
+            return self.cache[contract_name].abi
 
         return self.load_abi(contract_name)
 
@@ -60,8 +60,9 @@ class ABIManager:
             name = data["contractName"]
             bytecode_bytes = data["bytecode"]
             deployed_bytecode_bytes = data["deployedBytecode"]
-            self.cache[file_name] = abi
-            return ABIData(name, abi, bytecode_bytes, deployed_bytecode_bytes)
+            data = ABIData(name, abi, bytecode_bytes, deployed_bytecode_bytes)
+            self.cache[file_name] = data
+            return data
 
     def load_all_abis(self):
         """
