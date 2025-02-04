@@ -122,26 +122,28 @@ def update_contribution_contract_details(
         reserved_addresses = reserved[0]
         reserved_amounts = reserved[1]
 
-        reserved_slots = {}
-
-        for j in range(len(reserved_addresses)):
-            reserved_slots[reserved_addresses[j]] = reserved_amounts[j]
+        contributor_slots = {}
 
         for j in range(len(contributions_addresses)):
             address = contributions_addresses[j]
-            contributions_list.append(
-                {
-                    "contract_address": contract_address,
-                    "address": address,
-                    "amount": contributions_amounts[j],
-                    "beneficiary_address": contributions_beneficiaries[j],
-                    "reserved": reserved_slots.get(address, 0),
-                }
-            )
+            contributor_slots[address] = {
+                "contract_address": contract_address,
+                "address": address,
+                "amount": contributions_amounts[j],
+                "beneficiary_address": contributions_beneficiaries[j],
+                "reserved": 0,
+            }
+
+        for j in range(len(reserved_addresses)):
+            address = reserved_addresses[j]
+            amount = reserved_amounts[j]
+            contributor_slots.setdefault(address, {"contract_address": contract_address, "address": address, "beneficiary_address":address, "amount": 0}).update({"reserved": amount})
 
         status = responses[i + 4]
 
         manual_finalize = responses[i + 5]
+
+        contributions_list.extend(contributor_slots.values())
 
         contract_details.append(
             ContributionContractDetails(

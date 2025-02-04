@@ -210,7 +210,7 @@ def create_app(config: StakingAppConfig) -> App:
     def route_get_abis():
         return json_res(
             {"abis": app.cache.get("abis_all", getter=app.db_reader.get_smart_contract_abis,
-                                   ttl=config.backend.stale_time_seconds_contract_abis)}
+                                   ttl=config.stale_time_seconds_contract_abis)}
         )
 
     @app.route("/contract/addresses")
@@ -223,7 +223,7 @@ def create_app(config: StakingAppConfig) -> App:
     def get_contract_addresses_core():
         return json_res(
             {"addresses": app.cache.get("addresses_core", getter=app.db_reader.get_smart_contract_addresses_core,
-                                        ttl=config.backend.stale_time_seconds_contract_abis)}
+                                        ttl=config.stale_time_seconds_contract_abis)}
         )
 
     def get_contribution_contracts_cached():
@@ -291,7 +291,7 @@ def create_app(config: StakingAppConfig) -> App:
                 "contract": app.cache.get(
                     "abi-{}".format(contract_name), getter=app.db_reader.get_smart_contract_abi,
                     getter_args=contract_name,
-                    ttl=config.backend.stale_time_seconds_contract_abis
+                    ttl=config.stale_time_seconds_contract_abis
                 )
             }
         )
