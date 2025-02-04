@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import dataclasses
+from dataclasses import dataclass
 import statistics
 import flask
 import eth_utils
@@ -11,47 +12,61 @@ from .dataclasses import ArbitrumInfo
 from .read import DBReaderStaking
 from ..oxen.rpc import OxenRPC
 from ..registration.read import DBReaderRegistrations
-from ..util.flask_utils import FlaskApp, json_response
+from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
 from ..util.parse import Hex64Converter, EthConverter, eth_format
 
+@dataclass
+class StakingAppConfig(FlaskAppConfig):
+    # Flask App Config
+    disable_db_file_rewrite: bool = False
+    sqlite_db: str = None
+    sqlite_schema: str = None
+
+    sqlite_db_registrations: str = None
+    sqlite_schema_registrations: str = None
+
+    rpc_api: str = None
+    rpc_api_cache: int = None
+    rpc_shared: str = None
+    rpc_shared_cache: int = None
+    rpc_api_usage_logging: bool = None
+    rpc_api_usage_logging_interval: int = None
+
+    stale_time_seconds_contract_abis: int = None
 
 class App(FlaskApp):
-    def __init__(self, config):
-        name = config.backend.registration_api_name if config.backend.registration_api_name else __name__
-        super().__init__(name, enable_perf=config.backend.performance_logging,
-                         log_level=config.backend.log_level, log_level_generic=config.backend.log_level_generic,
-                         cache_stale_time_seconds=config.backend.stale_time_seconds)
+    def __init__(self, config: StakingAppConfig):
+        super().__init__(config)
 
         self.db_reader = DBReaderStaking(
-            db_path=config.backend.sqlite_db,
-            log_level=config.backend.log_level,
-            perf=config.backend.performance_logging,
+            db_path=config.sqlite_db,
+            log_level=config.log_level,
+            perf=config.enable_perf,
         )
         self.db_reader_registrations = DBReaderRegistrations(
-            db_path=config.backend.registration_sqlite_db,
-            log_level=config.backend.log_level,
-            perf=config.backend.performance_logging,
-            disable_db_file_rewrite=config.backend.disable_db_file_rewrite,
+            db_path=config.sqlite_db_registrations,
+            log_level=config.log_level,
+            perf=config.enable_perf,
         )
 
-        rpc_url = config.backend.rpc_api if config.backend.rpc_api else config.backend.rpc_shared
+        rpc_url = config.rpc_api if config.rpc_api else config.rpc_shared
         rpc_cache = (
-            config.backend.rpc_api_cache
-            if config.backend.rpc_api_cache
-            else config.backend.rpc_shared_cache
+            config.rpc_api_cache
+            if config.rpc_api_cache
+            else config.rpc_shared_cache
         )
 
         self.rpc = OxenRPC(
             logger=self.log,
             rpc_url=rpc_url,
             cache_seconds=rpc_cache,
-            usage_tracking=config.backend.rpc_api_usage_logging,
+            usage_tracking=config.rpc_api_usage_logging,
         )
 
         self.allowed_contract_names = set()
 
 
-def create_app(config) -> App:
+def create_app(config: StakingAppConfig) -> App:
     app = App(config)
 
     def get_and_refresh_allowed_contract_names():
@@ -184,7 +199,7 @@ def create_app(config) -> App:
         return app.cache.get(
             "allowed_contract_names",
             getter=get_and_refresh_allowed_contract_names,
-            ttl=config.backend.stale_time_seconds_contract_abis
+            ttl=config.stale_time_seconds_contract_abis
         )
 
     @app.route("/contract/names")
@@ -584,24 +599,24 @@ def create_app(config) -> App:
     //////////////////////////////////////////////////////////////
     """
 
-    if config.backend.rpc_api_usage_logging:
+    if config.rpc_api_usage_logging:
         def log_rpc_usage(signum):
             app.rpc.usage_tracker.log_usage(" For signum {}".format(signum))
             app.rpc.usage_tracker.write_failure_reasons_to_file(f"rpc-usage-failure-reasons-{signum}.txt")
 
-        @timer(config.backend.rpc_api_usage_logging_interval, target="worker1")
+        @timer(config.rpc_api_usage_logging_interval, target="worker1")
         def log_rpc_usage_w1(signum):
             log_rpc_usage(signum)
 
-        @timer(config.backend.rpc_api_usage_logging_interval, target="worker2")
+        @timer(config.rpc_api_usage_logging_interval, target="worker2")
         def log_rpc_usage_w2(signum):
             log_rpc_usage(signum)
 
-        @timer(config.backend.rpc_api_usage_logging_interval, target="worker3")
+        @timer(config.rpc_api_usage_logging_interval, target="worker3")
         def log_rpc_usage_w3(signum):
             log_rpc_usage(signum)
 
-        @timer(config.backend.rpc_api_usage_logging_interval, target="worker4")
+        @timer(config.rpc_api_usage_logging_interval, target="worker4")
         def log_rpc_usage_w4(signum):
             log_rpc_usage(signum)
 

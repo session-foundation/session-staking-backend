@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-import ..config as config
-from ..price.app import create_app, PriceAppConfig
+from src import config
+from src.price.app import create_app, PriceAppConfig
 
 price_config = PriceAppConfig(
     name="price_api",
