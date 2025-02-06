@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-import config
-from registration.app import create_app, RegistrationAppConfig
+from src import config
+from src.registration.app import create_app, RegistrationAppConfig
 
 registration_config = RegistrationAppConfig(
     name="registration_api",
