@@ -184,6 +184,8 @@ class App:
                     self.log.perf.start("loop")
                     network = self.rpc.get_network_info_from_network()
 
+                    immutable_block_height = network.immutable_block_height if network.immutable_block_height is not None else 0
+
                     network_last_fetched_height = (
                         self.db_reader.get_last_fetched_network_block_height()
                     )
@@ -193,7 +195,7 @@ class App:
                     self.log.debug(
                         "Last fetched height: {}, Immutable height: {}, Commited height {}, Current height: {}, next block timestamp: {}, ".format(
                             network_last_fetched_height,
-                            network.immutable_block_height,
+                            immutable_block_height,
                             network_last_commited_height,
                             network.block_height,
                             network.pulse_target_timestamp,
@@ -207,9 +209,9 @@ class App:
                         self.update_arbitrum_details()
                         self.time_keeper.end("arb_update")
 
-                    if network.immutable_block_height > network_last_commited_height:
+                    if immutable_block_height > network_last_commited_height:
                         self.time_keeper.add("db_migrate_and_update_exit_list")
-                        self.db_writer.write_nodes_to_main_db(network.immutable_block_height)
+                        self.db_writer.write_nodes_to_main_db(immutable_block_height)
                         self.update_exit_list()
                         self.time_keeper.end("db_migrate_and_update_exit_list")
 
