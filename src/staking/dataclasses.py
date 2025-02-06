@@ -105,6 +105,8 @@ class DBNetworkInfo:
     version: str
 
     def __post_init__(self):
+        if self.immutable_block_height is None:
+            self.immutable_block_height = 0
         # We don't need the id field when its a dict
         self.__dataclass_fields__ = {
             k: v for k, v in self.__dataclass_fields__.items() if k != "id"
