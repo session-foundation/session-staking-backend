@@ -184,8 +184,8 @@ class App:
                     self.log.perf.start("loop")
                     network = self.rpc.get_network_info_from_network()
 
-                    if network.get("immutable_block_height") is None:
-                        network.immutable_block_height = 0
+                    if network.immutable_block_height is None:
+                        network = NetworkInfo(*network, immutable_block_height=0)
 
                     network_last_fetched_height = (
                         self.db_reader.get_last_fetched_network_block_height()
