@@ -165,15 +165,15 @@ class OxenRPC:
         self.log.silly("get_network_info_from_network info: {}".format(info))
 
         return NetworkInfo(
-            block_hash=info.get("top_block_hash"),
+            block_hash=info.get("top_block_hash", "NA"),
             block_height=info.get("height", 0),
-            hard_fork=info.get("hard_fork"),
-            immutable_block_hash=info.get("immutable_block_hash"),
+            hard_fork=info.get("hard_fork", "NA"),
+            immutable_block_hash=info.get("immutable_block_hash", "NA"),
             immutable_block_height=info.get("immutable_height", 0),
             max_stakers=info.get("max_contributors", 0),
-            min_operator_contribution=info.get("min_operator_contribution"),
-            nettype=info.get("nettype"),
+            min_operator_contribution=info.get("min_operator_contribution", 0),
+            nettype=info.get("nettype", "NA"),
             pulse_target_timestamp=info.get("pulse_target_timestamp", 0),
             staking_requirement=info.get("staking_requirement", 0),
-            version=info.get("version"),
+            version=info.get("version", "NA"),
         )
