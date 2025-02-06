@@ -24,7 +24,7 @@ class Backend:
     log_level_generic                   = None  # Logs from other packages will use log_level if this is not set
     oxen_wallet_regex:              str = ""
     sqlite_db:                      str = "ssb.db"
-    sqlite_schema:                  str = "db/schema.sql"
+    sqlite_schema:                  str = "src/staking/schema.sql"
     rpc_shared:               list[str] = ""
     rpc_shared_cache:               int = 2
     disable_db_file_rewrite:       bool = False
@@ -46,7 +46,7 @@ class Backend:
     # NOTE: This can be the same DB as the main API, but you must manually run the registrations/schema.sql script in
     #   the main db so it can be populated with the required tables.
     registration_sqlite_db:             str = "ssb-registrations.db"
-    registration_sqlite_schema:         str = "registration/schema.sql"
+    registration_sqlite_schema:         str = "src/registration/schema.sql"
     # Creates a request per period limit by IP address (default is 100 requests per hour)
     registration_api_rate_limit:        int = 100
     registration_api_rate_limit_period: int = 3600
