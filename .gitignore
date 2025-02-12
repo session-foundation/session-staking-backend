@@ -1,5 +1,5 @@
 /*.db
-/config.py
+/src/config.py
 /__pycache__
 /oxend/*.sock
 */__pycache__
