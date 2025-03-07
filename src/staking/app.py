@@ -2,6 +2,7 @@
 import dataclasses
 from dataclasses import dataclass
 import statistics
+
 import flask
 import eth_utils
 from eth_typing import ChecksumAddress
@@ -13,7 +14,10 @@ from .read import DBReaderStaking
 from ..oxen.rpc import OxenRPC
 from ..registration.read import DBReaderRegistrations
 from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
-from ..util.parse import Hex64Converter, EthConverter, eth_format
+from ..util.parse import Hex64Converter, EthConverter, eth_format, parse_bls_pubkey
+from ..web3client.client import Web3Client
+from ..web3client.contracts_ws.service_node_contribution import ServiceNodeContribution
+
 
 @dataclass
 class StakingAppConfig(FlaskAppConfig):
@@ -65,6 +69,45 @@ class App(FlaskApp):
 
         self.allowed_contract_names = set()
 
+        self.arbitrum_sn_events = {}
+        self.contribution_contract_events = {}
+        self.arb_event_next_block = 0
+
+        self.contribution_contracts = {}
+
+        self.contribution_contract_map = {}
+
+    def get_arbitrum_events(self):
+        self.log.perf.start("get_arbitrum_sn_events")
+        missed_events = self.db_reader.get_arbitrum_events(from_block=self.arb_event_next_block, names=["NewServiceNodeV2", "ServiceNodeExitRequest", "ServiceNodeExit", "ServiceNodeLiquidated"])
+        latest_block = self.arb_event_next_block - 1
+
+        for event in missed_events:
+            if event.block > latest_block:
+                latest_block = event.block
+
+            if event.name == "NewServiceNodeContributionContract":
+                address = event.args.get("contributorContract")
+                if address:
+                    self.contribution_contract_events.setdefault(address, []).append(event)
+            else:
+                contract_id = event.args.get("serviceNodeID")
+                if contract_id:
+                    self.arbitrum_sn_events.setdefault(contract_id, []).append(event)
+
+        missed_contribution_contract_events = self.db_reader.get_arbitrum_events(from_block=self.arb_event_next_block, names=["NewServiceNodeContributionContract", *ServiceNodeContribution.event_names])
+        for event in missed_contribution_contract_events:
+            if event.block > latest_block:
+                latest_block = event.block
+            address = event.main_arg
+            if address:
+                self.contribution_contract_events.setdefault(address, []).append(event)
+
+        self.arb_event_next_block = latest_block + 1
+
+        self.log.perf.end("get_arbitrum_sn_events")
+        return self.arbitrum_sn_events, self.contribution_contract_events
+
 
 def create_app(config: StakingAppConfig) -> App:
     app = App(config)
@@ -103,6 +146,38 @@ def create_app(config: StakingAppConfig) -> App:
     def get_network_info_cached():
         return app.cache.get("network_info", getter=get_network_info_uncached, ttl=1)
 
+    def get_arbitrum_events_cached():
+        return app.cache.get("arbitrum_events_all", getter=app.get_arbitrum_events, ttl=1)
+
+    def get_contribution_contract_contributor_map_uncached():
+        _, contribution_contract_events = get_arbitrum_events_cached()
+        contracts = app.db_reader.get_contribution_contracts()
+        for address, events in contribution_contract_events.items():
+            contracts[address].events.extend(events)
+            for contributor in contracts[address].contributors:
+                app.contribution_contract_map.setdefault(contributor.address, [])
+                app.contribution_contract_map[contributor.address].append(contracts[address])
+        return app.contribution_contract_map
+
+    def get_contribution_contract_map_cached():
+        return app.cache.get("contribution_contracts", getter=get_contribution_contract_contributor_map_uncached, ttl=1)
+
+    def get_contribution_contracts_for_address_uncached(address: str):
+        return get_contribution_contract_map_cached().get(address, [])
+
+    def get_contribution_contracts_for_address_cached(address: str):
+        return app.cache.get(f"contribution_contracts-{address}", getter=get_contribution_contracts_for_address_uncached, getter_args=address, ttl=1)
+
+    def get_vesting_contracts_cached():
+        return app.cache.get("vesting_contracts", getter=app.db_reader.get_vesting_contracts, ttl=120)
+
+    def get_vesting_contracts_for_beneficiary_cached(beneficiary: str):
+        contracts = []
+        for contract in get_vesting_contracts_cached():
+            if contract.beneficiary == beneficiary:
+                contracts.append(contract)
+        return contracts
+
     def json_res(vals, include_network_info=True):
         if include_network_info:
             network_info, arbitrum_info = get_network_info_cached()
@@ -123,9 +198,21 @@ def create_app(config: StakingAppConfig) -> App:
     def route_get_nodes():
         return json_res({"nodes": get_nodes_cached()})
 
+    def get_added_bls_keys():
+        events_exit = app.db_reader.get_arbitrum_events_by_name("ServiceNodeExit")
+        sn_ids_exited = set([event.args["serviceNodeID"] for event in events_exit])
+
+        contract_id_map = {}
+        for event in app.db_reader.get_arbitrum_events_by_name("NewServiceNodeV2"):
+            sn_id = event.args["serviceNodeID"]
+            if sn_id not in sn_ids_exited:
+                contract_id_map[parse_bls_pubkey(event.args["pubkey"])] = sn_id
+        return contract_id_map
+
+
     def get_nodes_bls_keys_cached():
-        return app.cache.get("contract_node_bls_keys_added",
-                             getter=app.db_reader.get_service_node_rewards_contract_id_bls_key_map)
+        return app.cache.get("contract_node_bls_keys_added", getter=get_added_bls_keys)
+
 
     @app.route("/nodes/bls")
     def route_get_nodes_bls_keys():
@@ -164,7 +251,8 @@ def create_app(config: StakingAppConfig) -> App:
         try:
             address = eth_format(eth_wal)
             return json_res({"stakes": get_related_stakes_for_eth_address_cached(address),
-                             "contracts": get_related_contribution_contracts_for_eth_address_cached(address),
+                             "contracts": get_contribution_contracts_for_address_cached(address),
+                             "vesting": get_vesting_contracts_for_beneficiary_cached(address),
                              "added_bls_keys": get_nodes_bls_keys_cached()})
 
         except ValueError as e:

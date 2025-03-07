@@ -1,13 +1,12 @@
 import json
-import sqlite3
 import time
 from contextlib import closing
+
 from web3 import Web3
 
 from ..db.write import DBWriter
 from ..staking.arbitrum import ContributionContractDetails
-from ..staking.dataclasses import RewardsInfo, DBNodeExit
-from ..log import Log
+from ..staking.dataclasses import RewardsInfo, DBNodeExit, VestingContract
 from ..oxen.rpc import ServiceNode, NetworkInfo
 from ..web3client.abi_manager import ABIData
 from ..web3client.event_scanner import ProcessedEvent
@@ -16,20 +15,21 @@ from ..web3client.event_scanner import ProcessedEvent
 class DBWriterStaking(DBWriter):
     def __init__(self, db_path: str, log_level: int, perf: bool = False):
         super().__init__(db_path, log_level, perf)
+        self.defer_writing_arbitrum_events = False
+        self.deferred_arbitrum_events = []
 
     def write_nodes_to_staging_db(
-        self,
-        height: int,
-        parsed_nodes: list[ServiceNode],
-        # TODO: type the contributor_stake_map properly
-        contributions: list[dict[str, int]],
+            self,
+            height: int,
+            parsed_nodes: list[ServiceNode],
+            # TODO: type the contributor_stake_map properly
+            contributions: list[dict[str, int]],
     ):
         self.log.perf.start("write_to_db")
 
         with closing(self.connect()) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
-
                 self.log.debug("Inserting {} service nodes".format(len(parsed_nodes)))
                 self.log.perf.start("write_nodes_to_staging_db -> insert nodes")
 
@@ -353,10 +353,10 @@ class DBWriterStaking(DBWriter):
             self.log.perf.end("write_exit_list_to_db")
 
     def write_network_info_to_db(
-        self,
-        network: NetworkInfo,
-        node_count: int,
-        active_node_count: int,
+            self,
+            network: NetworkInfo,
+            node_count: int,
+            active_node_count: int,
     ):
         self.log.perf.start("write_network_info_to_db")
         with closing(self.connect()) as connection:
@@ -435,36 +435,91 @@ class DBWriterStaking(DBWriter):
             connection.commit()
             self.log.perf.end("write_rewards_info_to_db")
 
+    def write_arbitrum_event_to_db(self, event: ProcessedEvent):
+        if self.defer_writing_arbitrum_events:
+            self.log.debug(f"Deferring arbitrum event write: {event}")
+            self.deferred_arbitrum_events.append(event)
+            return
+        self.log.perf.start("write_arbitrum_event_to_db")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug("Inserting event into arbitrum_events")
+                self.log.debug(event)
+                self.log.perf.start("write_arbitrum_event_to_db -> insert event")
+                cursor.execute(
+                    """
+                    INSERT INTO arbitrum_events (
+                        args,
+                        block,
+                        log_index,
+                        main_arg,
+                        name,
+                        tx
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        Web3.to_json(dict(event.args)),
+                        event.block,
+                        event.log_index,
+                        event.main_arg,
+                        event.name,
+                        event.tx,
+                    ),
+                )
+                inserted_event_rows = cursor.rowcount
+                self.log.perf.end("write_arbitrum_event_to_db -> insert event")
+                self.log.debug(
+                    "Inserted {} rows into arbitrum_events".format(inserted_event_rows)
+                )
+            connection.commit()
+            self.log.perf.end("write_arbitrum_event_to_db")
+
+    def write_deferred_arbitrum_events_to_db(self):
+        if len(self.deferred_arbitrum_events) == 0:
+            self.log.warning("No deferred arbitrum events to write")
+            return
+
+        events, self.deferred_arbitrum_events = self.deferred_arbitrum_events, []
+
+        try:
+            self.log.info(f"Writing {len(events)} deferred arbitrum events to db")
+            self.write_arbitrum_events_to_db(events)
+        except Exception as e:
+            self.log.error("Error writing deferred arbitrum events")
+            self.log.error(e)
+            self.deferred_arbitrum_events = events + self.deferred_arbitrum_events
+
     def write_arbitrum_events_to_db(self, events: list[ProcessedEvent]):
         self.log.perf.start("write_arbitrum_events_to_db")
 
         with closing(self.connect()) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
-
                 self.log.debug("Inserting {} events into arbitrum_events".format(len(events)))
                 self.log.perf.start("write_arbitrum_events_to_db -> insert events")
 
                 cursor.executemany(
                     """
                     INSERT OR REPLACE INTO arbitrum_events (
+                        args,
                         block,
-                        timestamp,
-                        tx,
-                        name,
+                        log_index,
                         main_arg,
-                        args
+                        name,
+                        tx
                     )
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         (
-                            event.block,
-                            event.timestamp,
-                            "0x" + event.tx,
-                            event.name,
-                            event.main_arg,
                             Web3.to_json(dict(event.args)),
+                            event.block,
+                            event.log_index,
+                            event.main_arg,
+                            event.name,
+                            event.tx,
                         )
                         for event in events
                     ),
@@ -482,15 +537,139 @@ class DBWriterStaking(DBWriter):
             connection.commit()
             self.log.perf.end("write_arbitrum_events_to_db")
 
+    def write_new_contribution_contract(self, address: str, operator_address: str):
+        self.log.perf.start("write_new_contribution_contract")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(f"Inserting new contribution contract")
+                cursor.execute("""
+                INSERT OR REPLACE INTO contribution_contracts (
+                    address,
+                    operator_address
+                )
+                VALUES (?, ?)
+                """, (address, operator_address))
+
+                connection.commit()
+                self.log.perf.end("write_new_contribution_contract")
+
+    def write_update_contribution_contract_status(self, address: str, status: int):
+        self.log.perf.start("write_update_contribution_contract_status")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(f"Updating contribution contract status to {status}")
+                cursor.execute(
+                    """
+                    UPDATE contribution_contracts SET status = ? WHERE address = ?
+                    """,
+                    (status, address),
+                )
+
+                connection.commit()
+                self.log.perf.end("write_update_contribution_contract_status")
+
+    def write_update_contribution_contract_manual_finalize(self, address: str, manual_finalize: bool):
+        self.log.perf.start("write_update_contribution_contract_manual_finalize")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(f"Updating contribution contract manual_finalize to {manual_finalize}")
+                cursor.execute(
+                    """
+                    UPDATE contribution_contracts SET manual_finalize = ? WHERE address = ?
+                    """,
+                    (manual_finalize, address),
+                )
+
+                connection.commit()
+                self.log.perf.end("write_update_contribution_contract_manual_finalize")
+
+    def write_update_contribution_contract_fee(self, address: str, fee: int):
+        self.log.perf.start("write_update_contribution_contract_fee")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(f"Updating contribution contract fee to {fee}")
+                cursor.execute(
+                    """
+                    UPDATE contribution_contracts SET fee = ? WHERE address = ?
+                    """,
+                    (fee, address),
+                )
+
+                connection.commit()
+                self.log.perf.end("write_update_contribution_contract_fee")
+
+    def write_update_contribution_contract_pubkeys(self, address: str, pubkey_bls: str, service_node_pubkey: str):
+        self.log.perf.start("write_update_contribution_contract_pubkeys")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(f"Updating contribution contract pubkeys")
+                cursor.execute(
+                    """
+                    INSERT OR UPDATE contribution_contracts SET pubkey_bls = ?, service_node_pubkey = ? WHERE address = ?
+                    """,
+                    (pubkey_bls, service_node_pubkey, address),
+                )
+
+                connection.commit()
+                self.log.perf.end("write_update_contribution_contract_pubkeys")
+
+    def write_update_contribution_contract_contributor(self, contract_address: str, contributor):
+        self.log.perf.start("write_update_contribution_contract_contributor")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(f"Updating contribution contract contributor")
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO contribution_contracts_contributions (
+                        address,
+                        amount,
+                        beneficiary_address,
+                        contract_address,
+                        reserved
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                """,
+                    (
+                        contributor.address,
+                        contributor.amount,
+                        contributor.beneficiary_address,
+                        contract_address,
+                        contributor.reserved
+                    ),
+                )
+
+                connection.commit()
+
+    def write_delete_contribution_contract_contributor(self, contract_address: str, contributor):
+        self.log.perf.start("write_delete_contribution_contract_contributor")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(f"Deleting contribution contract contributor")
+                cursor.execute(
+                    """
+                    DELETE FROM contribution_contracts_contributions WHERE address = ? AND contract_address = ?
+                    """,
+                    (contributor.address, contract_address),
+                )
+
+                connection.commit()
+                self.log.perf.end("write_delete_contribution_contract_contributor")
+
     def write_contribution_contracts_to_db(
-        self, contracts: list[ContributionContractDetails], contributions_list: list, add_event_timestamps: dict[str, int], node_last_added_timestamps: dict[str,int], create_contract_timestamps: dict[str, int]
+            self, contracts: list[ContributionContractDetails], contributions_list: list
     ):
         self.log.perf.start("write_contribution_contracts_to_db")
 
         with closing(self.connect()) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
-
                 self.log.debug("Inserting {} contribution contracts".format(len(contracts)))
                 self.log.perf.start("write_contribution_contracts_to_db -> insert contracts")
 
@@ -498,31 +677,23 @@ class DBWriterStaking(DBWriter):
                     """
                     INSERT OR REPLACE INTO contribution_contracts (
                         address,
-                        created_timestamp,
                         fee,
-                        last_added_timestamp,
                         manual_finalize,
-                        node_add_timestamp,
                         operator_address,
                         pubkey_bls,
                         service_node_pubkey,
-                        service_node_signature,
                         status
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         (
                             contract.address,
-                            create_contract_timestamps.get(contract.address),
                             contract.fee,
-                            node_last_added_timestamps.get(contract.pubkey_bls),
                             contract.manual_finalize,
-                            add_event_timestamps.get(contract.pubkey_bls),
                             contract.operator_address,
                             contract.pubkey_bls,
                             contract.service_node_pubkey,
-                            contract.service_node_signature,
                             contract.status,
                         )
                         for contract in contracts
@@ -608,7 +779,6 @@ class DBWriterStaking(DBWriter):
         with closing(self.connect()) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
-
                 self.log.debug("Inserting {} smart contract abis".format(len(abis)))
                 self.log.perf.start("write_smart_contract_abis_to_db -> insert abis")
 
@@ -644,14 +814,13 @@ class DBWriterStaking(DBWriter):
             self.log.perf.end("write_smart_contract_abis_to_db")
 
     def write_smart_contract_details_to_db(
-        self,
-        contracts,
+            self,
+            contracts,
     ):
         self.log.perf.start("write_smart_contract_details_to_db")
         with closing(self.connect()) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
-
                 self.log.debug("Inserting {} smart contract details".format(len(contracts)))
                 self.log.perf.start("write_smart_contract_details_to_db -> insert contracts")
 
@@ -691,8 +860,10 @@ class DBWriterStaking(DBWriter):
                     "Inserting arbitrum info: current block {}, service node rewards balance {}, reward rate pool balance {}".format(
                         current_block, service_node_rewards_balance, reward_rate_pool_balance))
                 self.log.perf.start("write_arbitrum_info_to_db -> insert info")
-                
-                cursor.execute("INSERT OR REPLACE INTO arbitrum_info (block, balance_service_node_rewards, balance_reward_rate_pool) VALUES (?, ?, ?)", (current_block, service_node_rewards_balance, reward_rate_pool_balance))
+
+                cursor.execute(
+                    "INSERT OR REPLACE INTO arbitrum_info (block, balance_service_node_rewards, balance_reward_rate_pool) VALUES (?, ?, ?)",
+                    (current_block, service_node_rewards_balance, reward_rate_pool_balance))
 
                 inserted_info_rows = cursor.rowcount
 
@@ -704,41 +875,131 @@ class DBWriterStaking(DBWriter):
             connection.commit()
             self.log.perf.end("write_arbitrum_info_to_db")
 
-    def write_service_node_rewards_contract_id_bls_key_map(self, contract_id_map: dict[str, str]):
-        self.log.perf.start("write_service_node_rewards_contract_id_bls_key_map")
+    def write_vesting_contracts(self, vesting_contracts: list[VestingContract]):
+        self.log.perf.start("write_vesting_contracts")
         with closing(self.connect()) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
-                self.log.debug("Inserting {} service node rewards contract ids".format(len(contract_id_map)))
-                self.log.perf.start("write_service_node_rewards_contract_id_bls_key_map -> insert contract ids")
+                self.log.debug("Inserting {} vesting contracts".format(len(vesting_contracts)))
+                self.log.perf.start("write_vesting_contracts -> insert contracts")
 
-                cursor.execute("DELETE FROM service_node_rewards_contract_id_bls_key_map")
+                # assert the table is empty
+                cursor.execute("SELECT COUNT(*) FROM vesting_contracts")
+                assert cursor.fetchone()[0] == 0, "Vesting contract table is not empty"
 
                 cursor.executemany(
                     """
-                    INSERT INTO service_node_rewards_contract_id_bls_key_map (
-                        contract_id,
-                        pubkey_bls
+                    INSERT OR REPLACE INTO vesting_contracts (
+                        address,
+                        beneficiary,
+                        initial_amount,
+                        initial_beneficiary,
+                        revoker,
+                        time_end,
+                        time_start,
+                        transferable_beneficiary
                     )
-                    VALUES (?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         (
-                            int(contract_id),
-                            pubkey_bls,
+                            contract.address,
+                            contract.beneficiary,
+                            contract.initial_amount,
+                            contract.initial_beneficiary,
+                            contract.revoker,
+                            contract.time_end,
+                            contract.time_start,
+                            contract.transferable_beneficiary,
                         )
-                        for pubkey_bls, contract_id in contract_id_map.items()
+                        for contract in vesting_contracts
                     ),
                 )
 
-                inserted_contract_id_rows = cursor.rowcount
+                inserted_contract_rows = cursor.rowcount
 
-                self.log.perf.end("write_service_node_rewards_contract_id_bls_key_map -> insert contract ids")
+                self.log.perf.end("write_vesting_contracts -> insert contracts")
                 self.log.debug(
-                    "Inserted {} rows into service_node_rewards_contract_id_bls_key_map".format(
-                        inserted_contract_id_rows
-                    )
+                    "Inserted {} rows into vesting_contracts".format(inserted_contract_rows)
                 )
 
             connection.commit()
-            self.log.perf.end("write_service_node_rewards_contract_id_bls_key_map")
+            self.log.perf.end("write_vesting_contracts")
+
+    def delete_all_vesting_contracts(self):
+        self.log.perf.start("delete_all_vesting_contracts")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                cursor.execute("DELETE FROM vesting_contracts")
+                deleted_rows = cursor.rowcount
+                self.log.debug(
+                    "Cleared {} rows from vesting_contracts".format(deleted_rows)
+                )
+            connection.commit()
+            self.log.perf.end("delete_all_vesting_contracts")
+
+    def write_update_vesting_contract_beneficiary(self, address: str, beneficiary: str):
+        self.log.perf.start("write_update_vesting_contract_beneficiary")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug("Updating vesting contract {} beneficiary to {}".format(address, beneficiary))
+                self.log.perf.start("write_update_vesting_contract_beneficiary -> update beneficiary")
+
+                cursor.execute(
+                    """
+                    UPDATE vesting_contracts SET beneficiary = ? WHERE address = ?
+                    """,
+                    (beneficiary, address),
+                )
+
+                updated_rows = cursor.rowcount
+
+                self.log.perf.end("write_update_vesting_contract_beneficiary -> update beneficiary")
+                self.log.debug(
+                    "Updated {} rows in vesting_contracts".format(updated_rows)
+                )
+
+            connection.commit()
+            self.log.perf.end("write_update_vesting_contract_beneficiary")
+
+    def delete_all_events(self):
+        self.log.perf.start("delete_all_events")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug("Deleting all events from the db")
+
+                cursor.execute("""Delete from arbitrum_events""")
+
+                deleted_rows = cursor.rowcount
+
+                self.log.debug(
+                    "Cleared {} rows from vesting_contracts".format(deleted_rows)
+                )
+
+            connection.commit()
+            self.log.perf.end("delete_all_events")
+
+    def delete_all_contrib_contracts_and_contributors(self):
+        self.log.perf.start("delete_all_contrib_contracts_and_contributors")
+        with closing(self.connect()) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                cursor.execute("""Delete from contribution_contracts_contributions""")
+                deleted_contributions_rows = cursor.rowcount
+
+                self.log.debug(
+                    "Cleared {} rows from contribution_contracts_contributions".format(deleted_contributions_rows)
+                )
+
+                cursor.execute("""Delete from contribution_contracts""")
+                deleted_contract_rows = cursor.rowcount
+
+                self.log.debug(
+                    "Cleared {} rows from contribution_contracts".format(deleted_contract_rows)
+                )
+
+            connection.commit()
+            self.log.perf.end("delete_all_contrib_contracts_and_contributors")

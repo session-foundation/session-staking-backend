@@ -22,27 +22,50 @@ class Backend:
     """
     log_level                           = logging.INFO
     log_level_generic                   = None  # Logs from other packages will use log_level if this is not set
+    performance_logging:          bool = False
     oxen_wallet_regex:              str = ""
-    sqlite_db:                      str = "ssb.db"
-    sqlite_schema:                  str = "src/staking/schema.sql"
     rpc_shared:               list[str] = ""
     rpc_shared_cache:               int = 2
-    disable_db_file_rewrite:       bool = False
 
+    """
+    WEB3 Config
+    """
+    web3_provider_urls:      list[str] = ["http://localhost:8545"]  # Default hardhat private chain node address)
+    web3_provider_urls_eth:  list[str] = ["http://localhost:8545"]
+    web3_caller_address:    str | None = None
+    web3_private_key:       str | None = None
+    addr_reward_rate_pool:         str = "0x0000000000000000000000000000000000000000"
+    addr_token:                    str = "0x0000000000000000000000000000000000000000"
+    addr_sn_contrib:               str = "0x0000000000000000000000000000000000000000"
+    addr_sn_contrib_factory:       str = "0x0000000000000000000000000000000000000000"
+    addr_sn_rewards:               str = "0x0000000000000000000000000000000000000000"
+    # All block scanning will take this as the starting block, no log events can occur before a contract is deployed
+    # so this is the first block that can be used to scan for events. Using 0 significantly slows down the scan.
+    # genesis_block:                 int = 114505919
+    genesis_block:                 int = 114500919
+
+    """
+    DB CONFIG
+    """
+    sqlite_db:                      str = "ssb.db"
+    sqlite_schema:                  str = "src/staking/schema.sql"
+    disable_db_file_rewrite:       bool = False
+    db_reset_events_on_startup:    bool = False
+    db_reset_contrib_on_startup:   bool = False
 
     """
     API CONFIG
     """
-    api_name:                       str = "api"
-    rpc_api:                        str = ""
-    rpc_api_cache:                  int = 2
-    rpc_api_usage_logging:         bool = False
-    rpc_api_usage_logging_interval: int = 300
+    rpc_api:                          str = ""
+    rpc_api_cache:                    int = 2
+    rpc_api_usage_logging:           bool = False
+    rpc_api_usage_logging_interval:   int = 300
+    stale_time_seconds:               int = 5
+    stale_time_seconds_contract_abis: int = 300
 
     """
     REGISTRATION CONFIG
     """
-    registration_api_name:              str = "registration_api"
     # NOTE: This can be the same DB as the main API, but you must manually run the registrations/schema.sql script in
     #   the main db so it can be populated with the required tables.
     registration_sqlite_db:             str = "ssb-registrations.db"
@@ -58,37 +81,45 @@ class Backend:
     # Arbitrum runs at ~4 blocks per second, and the rpc node has a limit of 30m, so scan for 120 blocks
     arbitrum_rescan_safety_blocks: int = 60
     arbitrum_scan_start_chunk_size: int = 20
-    addr_reward_rate_pool:         str = "0x0000000000000000000000000000000000000000"
-    addr_token:                    str = "0x0000000000000000000000000000000000000000"
-    addr_sn_contrib:               str = "0x0000000000000000000000000000000000000000"
-    addr_sn_contrib_factory:       str = "0x0000000000000000000000000000000000000000"
-    addr_sn_rewards:               str = "0x0000000000000000000000000000000000000000"
-    refresh_rate_seconds_arbitrum: int = 30
+    refresh_rate_seconds_arbitrum: int = 10
     max_time_keeper_events:        int = 10_000
-    fetcher_name:                  str = "fetcher"
-    performance_logging:          bool = False
-    rpc_fetcher:                   str = ""
-    rpc_fetcher_cache:             int = 2
+    rpc_fetcher_cache:             int = 1
     rpc_fetcher_usage_logging:    bool = False
-    stale_time_seconds:            int = 30
-    stale_time_seconds_contract_abis: int = 300
-    thread_pool_max_workers:       int = 50
-    web3_caller_address:    str | None = None
-    web3_private_key:       str | None = None
-    web3_provider_urls:      list[str] = ["http://localhost:8545"]  # Default hardhat private chain node address)
+    write_rpc_fail_reasons_to_file: bool = False
+
+    """
+    VESTING
+    """
+    vesting_contract_details_csv: str = "vesting.csv"
+    reset_vesting_contracts_on_startup: bool = False
+
+    """
+    WEB SOCKETS
+    """
+    # This will disable Arbitrum event scanning in the fetcher
+    ws_enabled:                   bool = True
+    ws_providers:            list[str] = []
+    # The default ws size is set to 1GB to ensure all bootstrapping event scans go through, this value is extremely large
+    # to ensure it isn't exceeded in the future, as with time the size of the full network event scan will increase. if
+    # your Arbitrum node doesn't support high enough websocket sizes you should download the snapshot database and start
+    # running from there. TODO: add event scan chunking to allow for smaller websocket sizes
+    ws_max_size:                   int = 1_000_000_000
+    # The maximum depth of the event scanner bootstrap loop. This is to prevent infinite loops in the event scanner.
+    # While it shouldn't be possible for this to happen, it is a safety measure.
+    ws_max_run_depth:              int = 10
+    # Only enable this if you want to track Approve and Transfer events for the token contract
+    ws_watch_token_events:        bool = False
 
     """
     SNAPSHOT CONFIG
     """
-    snapshot_task_name:                    str = "snapshot"
     sqlite_db_snapshot:                    str = "static/backend-snapshot.db"
-    sqlite_snapshot_time_interval_seconds: int = 600
+    snapshot_time_interval_seconds:        int = 600
     snapshot_on_startup:                  bool = False
 
     """
     PRICE FETCHER CONFIG
     """
-    prices_api_name:                    str = "prices_api"
     enable_price_fetcher:               bool = False
     coingecko_api_key:                  str = ""
     coingecko_api_url:                  str = "https://api.coingecko.com/api"
@@ -112,7 +143,6 @@ mainnet_backend.sqlite_db              = "ssb-mainnet.db"
 
 # Session testnet contracts
 testnet_backend = Backend()
-testnet_backend.oxen_wallet_regex       = f"T[{B58_ALPHABET}]{{96}}"
 testnet_backend.rpc_shared              = "ipc://oxend/testnet.sock"
 testnet_backend.sqlite_db               = "ssb-testnet.db"
 
@@ -129,7 +159,6 @@ devnet_backend.web3_provider_urls        = ["https://sepolia-rollup.arbitrum.io/
 
 # Session stagenet.v3 contracts
 stagenet_backend = Backend()
-stagenet_backend.web3_provider_urls     = ["http://10.24.0.2/arb_sepolia"]
 stagenet_backend.addr_reward_rate_pool   = "0xaAD853fE7091728dac0DAa7b69990ee68abFC636"
 stagenet_backend.addr_token              = "0x7D7fD4E91834A96cD9Fb2369E7f4EB72383bbdEd"
 stagenet_backend.addr_sn_contrib_factory = "0x36Ee2Da54a7E727cC996A441826BBEdda6336B71"
@@ -137,6 +166,8 @@ stagenet_backend.addr_sn_rewards         = "0x9d8aB00880CBBdc2Dcd29C179779469A82
 stagenet_backend.oxen_wallet_regex       = f"ST[{B58_ALPHABET}]{{95}}"
 stagenet_backend.rpc_shared              = "tcp://localhost:6786"
 stagenet_backend.sqlite_db               = "ssb-stagenet.db"
+stagenet_backend.ws_providers            = ["ws://10.24.0.1/arb_sepolia/ws"]
+stagenet_backend.web3_provider_urls      = ["http://10.24.0.1/arb_sepolia"]
 
 # Assign the active backend to be used in the sent-staking-backend
 backend = stagenet_backend

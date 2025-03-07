@@ -28,19 +28,4 @@ class TokenInterface(ContractInterface):
         """
         return self.contract.functions.balanceOf(address).call()
 
-    @staticmethod
-    def to_atomic(amount: float | int) -> int:
-        """
-        Converts a float or int to an atomic amount
-        """
-        print(TokenInterface.decimals)
-        print(amount)
-        print((amount * 10 ** TokenInterface.decimals))
-        return int(amount * 10 ** TokenInterface.decimals)
 
-    @staticmethod
-    def from_atomic(amount: int) -> float:
-        """
-        Converts an atomic amount to a float
-        """
-        return amount / 10 ** TokenInterface.decimals
