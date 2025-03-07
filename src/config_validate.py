@@ -1,68 +1,46 @@
 import logging
 
-from . import config
+from eth_utils import is_checksum_address
+
 from .log import Log
 from .oxen.rpc import OxenRPC
-from .util import is_not_empty_string, valid_address_assertion
-from .web3client.abi_manager import ABIManager
+from .util import is_not_empty_string
 from .web3client.client import Web3Client
 
+log = Log("config_validate").logger
 
-def validate_config(conf: config):
-    log = Log("config_validate").logger
-    log.perf.start("validate_config")
-    log.info("Validating config")
-
-    """
-    Production warnings
-    """
-    if conf.backend.log_level < logging.INFO:
+def validate_log_config(conf):
+    if conf.log_level < logging.INFO:
         log.warning(
             "Log level is set to {} which is less than INFO. This is not recommended for production.".format(
-                conf.backend.log_level
+                conf.log_level
             )
         )
-    elif conf.backend.log_level > logging.ERROR:
+    elif conf.log_level > logging.ERROR:
         log.warning(
             "Log level is set to {} which is greater than ERROR. This is not recommended for production.".format(
-                conf.backend.log_level
+                conf.log_level
             )
         )
 
-    if conf.backend.performance_logging:
-        log.warning("Performance logging is enabled. This is not recommended for production.")
+def validate_contract_addresses(conf):
+    assert is_checksum_address(conf.addr_token), "addr_token is not a valid checksum address"
+    assert is_checksum_address(conf.addr_sn_contrib_factory), "addr_sn_contrib_factory is not a valid checksum address"
+    assert is_checksum_address(conf.addr_sn_rewards), "addr_sn_rewards is not a valid checksum address"
+    assert is_checksum_address(conf.addr_reward_rate_pool), "addr_reward_rate_pool is not a valid checksum address"
 
-    """
-    Validations
-    """
-
-    assert is_not_empty_string(conf.backend.sqlite_db), "sqlite_db is not set in config.py"
-    rpc_url = conf.backend.rpc_fetcher if conf.backend.rpc_fetcher else conf.backend.rpc_shared
-    assert is_not_empty_string(rpc_url), "rpc url is not set in config.py requires rpc_fetcher or rpc"
-    assert is_not_empty_string(
-        conf.backend.oxen_wallet_regex
-    ), "oxen_wallet_regex is not set in config.py"
-
-    # Assert all contract addresses are valid
-    valid_address_assertion(conf.backend.addr_sn_contrib, "addr_sn_contrib")
-    valid_address_assertion(conf.backend.addr_token, "addr_sent")
-    valid_address_assertion(conf.backend.addr_sn_rewards, "addr_sn_rewards")
-    valid_address_assertion(conf.backend.addr_reward_rate_pool, "addr_reward_rate_pool")
-
-    assert conf.backend.web3_provider_urls is not None and len(
-        conf.backend.web3_provider_urls
+def validate_web3_client(conf):
+    assert conf.web3_provider_urls is not None and len(
+        conf.web3_provider_urls
     ) > 0, "web3_provider_urls is not set in config.py"
 
-    for web3_provider_url in conf.backend.web3_provider_urls:
+    for web3_provider_url in conf.web3_provider_urls:
         assert is_not_empty_string(web3_provider_url), "web3_provider_urls is not set properly in config.py"
 
-    """
-    Web3 client validations
-    """
     web3_client = Web3Client(
-        conf.backend.web3_provider_urls,
-        conf.backend.web3_caller_address,
-        conf.backend.web3_private_key,
+        conf.web3_provider_urls,
+        conf.web3_caller_address,
+        conf.web3_private_key,
         log,
     )
 
@@ -70,15 +48,10 @@ def validate_config(conf: config):
     log.debug("Config validation block number: {}".format(block_number))
     assert block_number is not None, "Failed to get block number from web3 provider"
 
-    """
-    Oxen RPC validations
-    """
-    rpc = OxenRPC(log, rpc_url, 0)
+def validate_oxen_rpc(conf):
+    rpc = OxenRPC(log, conf.rpc_shared, 0)
     res = rpc.get_info().get()
     log.debug("Config validation rpc response status: {}".format(res.get("status")))
     assert (
         res is not None and res.get("status") == "OK"
-    ), "Oxen RPC ping to {} failed with response: {}".format(conf.backend.rpc_fetcher, res)
-
-    log.info("Config validation finished")
-    log.perf.end("validate_config")
+    ), "Oxen RPC ping to {} failed with response: {}".format(conf.rpc_shared, res)
