@@ -3,12 +3,11 @@ import json
 import subprocess
 import time
 
+from ..config_validate import validate_log_config, validate_contract_addresses, validate_web3_client, validate_oxen_rpc
 from ..staking.arbitrum import (
-    get_service_node_rewards_contract_id_map,
     get_new_contribution_contracts,
-    update_contribution_contract_details, batch_populate_events_with_block_timestamps, populate_events_with_main_arg,
+    update_contribution_contract_details, populate_events_with_main_arg,
 )
-from ..config_validate import validate_config
 from .. import config
 from ..staking.dataclasses import RewardsInfo, DBNodeExit
 from ..db.util import (
@@ -37,10 +36,25 @@ from ..web3client.contracts.token import TokenInterface
 
 
 class App:
-    def __init__(self, name):
+    def __init__(self, name, run_once_as_script=False):
         super().__init__()
         log = Log(name, enable_perf=config.backend.performance_logging)
         log.set_level(config.backend.log_level)
+        self.log = log.logger
+        self.run_once_as_script = run_once_as_script
+
+        validate_log_config(config.backend)
+        validate_contract_addresses(config.backend)
+
+        self.arbitrum_updates_disabled = config.backend.ws_enabled
+        if self.arbitrum_updates_disabled:
+            self.log.warning(
+                "Arbitrum updates are disabled because ws_enabled is set to True, the separate websocket fetcher should be used instead")
+        else:
+            self.log.info("Arbitrum updates are enabled")
+            validate_web3_client(config)
+
+        validate_oxen_rpc(config.backend)
 
         git_rev = subprocess.run(
             ["git", "rev-parse", "--short=9", "HEAD"], stdout=subprocess.PIPE, text=True
@@ -55,8 +69,6 @@ class App:
             else config.backend.log_level
         )
 
-        self.log = log.logger
-        validate_config(config)
         if not is_db_initialized(config.backend.sqlite_db):
             self.log.info(
                 "Initializing database {} with schema {}".format(
@@ -76,9 +88,7 @@ class App:
             perf=config.backend.performance_logging,
         )
 
-        rpc_url = (
-            config.backend.rpc_fetcher if config.backend.rpc_fetcher else config.backend.rpc_shared
-        )
+        rpc_url = config.backend.rpc_shared
         rpc_cache = (
             config.backend.rpc_fetcher_cache
             if config.backend.rpc_fetcher_cache
@@ -92,15 +102,9 @@ class App:
             usage_tracking=config.backend.rpc_fetcher_usage_logging,
         )
 
-        self.loop_sleep_refresh_rate_seconds = rpc_cache if rpc_cache > 0 else 5
+        self.loop_sleep_refresh_rate_seconds = rpc_cache if rpc_cache > 0 else 1
 
         self.arbitrum_details_next_update_time = 0
-
-        # looks like { pubkey_bls : { add: [], exit: []}}
-        self.arbitrum_node_events_bls_key_to_events_timestamps_map: dict[str, dict[str, list[int]]] = {}
-
-        # dict of contract address to timestamp of when it was created
-        self.contribution_contract_creation_timestamps: dict[str, int] = {}
 
         self.web3_client = Web3Client(
             provider_urls=config.backend.web3_provider_urls,
@@ -110,7 +114,8 @@ class App:
             abi_manager=ABIManager(db_writer=self.db_writer, abi_dir=config.backend.abi_dir),
         )
 
-        self.log.info(f"Using contract addresses:\n Token: {config.backend.addr_token}\n SN Rewards: {config.backend.addr_sn_rewards}\n Reward Rate Pool: {config.backend.addr_reward_rate_pool}\n SN Contribution Factory: {config.backend.addr_sn_contrib_factory}")
+        self.log.info(
+            f"Using contract addresses:\n Token: {config.backend.addr_token}\n SN Rewards: {config.backend.addr_sn_rewards}\n Reward Rate Pool: {config.backend.addr_reward_rate_pool}\n SN Contribution Factory: {config.backend.addr_sn_contrib_factory}")
 
         self.token_contract = TokenInterface(
             web3_client=self.web3_client, contract_address=config.backend.addr_token
@@ -140,6 +145,9 @@ class App:
             logger=Log("time_keeper").logger,
             max_events=config.backend.max_time_keeper_events,
         )
+
+        self.last_new_sn_event = 0
+        self.contract_id_map = {}
 
         self.bootstrap()
 
@@ -200,9 +208,7 @@ class App:
                         )
                     )
 
-                    if (
-                        time.time() >= self.arbitrum_details_next_update_time
-                    ):
+                    if not self.arbitrum_updates_disabled and time.time() >= self.arbitrum_details_next_update_time:
                         self.time_keeper.add("arb_update")
                         self.update_arbitrum_details()
                         self.time_keeper.end("arb_update")
@@ -221,26 +227,25 @@ class App:
                     self.log.perf.end("loop")
                     self.time_keeper.log_time_keeper()
                     self.rpc.usage_tracker.log_usage()
-                    self.rpc.usage_tracker.write_failure_reasons_to_file(f"rpc-usage-failure-reasons-fetcher.txt")
+                    if config.backend.write_rpc_fail_reasons_to_file:
+                        self.rpc.usage_tracker.write_failure_reasons_to_file(f"rpc-usage-failure-reasons-fetcher.txt")
 
                     now = time.time()
 
                     sleep_seconds = max(
                         self.loop_sleep_refresh_rate_seconds,
-                        min(
-                            self.arbitrum_details_next_update_time,
-                            network.pulse_target_timestamp,
-                        )
-                        - now,
+                        (network.pulse_target_timestamp - 5 if self.arbitrum_updates_disabled else
+                         min(self.arbitrum_details_next_update_time, network.pulse_target_timestamp)
+                         ) - now,
                     )
 
-                    self.log.debug(
+                    self.log.info(
                         "Sleeping for {}s ({}) (Target Event: {})".format(
                             format_seconds(sleep_seconds),
                             format_seconds(now + sleep_seconds, 0),
                             (
                                 "network_update"
-                                if sleep_seconds == network.pulse_target_timestamp - now
+                                if sleep_seconds == network.pulse_target_timestamp - 5 - now
                                 else (
                                     "arb_update"
                                     if sleep_seconds == self.arbitrum_details_next_update_time - now
@@ -249,6 +254,10 @@ class App:
                             ),
                         )
                     )
+
+                    if self.run_once_as_script:
+                        self.log.info("run_once_as_script is True, exiting...")
+                        return
 
                     time.sleep(sleep_seconds)
 
@@ -260,10 +269,10 @@ class App:
 
                     if t2_event_loop_exception_count > 3:
                         self.log.warning(
-                            "Too many t2 event loop exceptions, sleeping for 5 minutes before continuing"
+                            "Too many t2 event loop exceptions, sleeping for 2 minutes before continuing"
                         )
                         t2_event_loop_exception_count = 0
-                        time.sleep(300)
+                        time.sleep(120)
                     elif t1_event_loop_exception_count > 10:
                         self.log.warning(
                             "Too many t1 event loop exceptions, sleeping for 30 seconds before continuing"
@@ -279,10 +288,9 @@ class App:
             self.log.info("Application exiting...")
 
     def update_network_details_and_nodes(
-        self,
-        network: NetworkInfo,
+            self,
+            network: NetworkInfo,
     ):
-        self.log.perf.start("update_service_node_list")
         self.log.info("Update service node list task start")
         parsed_nodes, contributor_stake_map, current_height, node_count, active_node_count = self.fetch_service_node_list()
 
@@ -290,28 +298,13 @@ class App:
             current_height, parsed_nodes, contributor_stake_map
         )
 
-        self.db_writer.write_network_info_to_db(network=network, node_count=node_count, active_node_count=active_node_count)
+        self.db_writer.write_network_info_to_db(network=network, node_count=node_count,
+                                                active_node_count=active_node_count)
 
         rewards_info = self.get_rewards_info()
         self.db_writer.write_rewards_info_to_db(rewards_info)
 
         self.log.info("Scheduled task finish")
-        self.log.perf.end("scheduled_task")
-
-    def fetch_service_node_rewards_contract_id_bls_key_map(self):
-        self.log.perf.start("fetch_service_node_rewards_contract_id_bls_key_map")
-        contract_id_map = {}
-        try:
-            contract_id_map = get_service_node_rewards_contract_id_map(self.service_node_rewards)
-            self.log.debug(
-                "Found {} service node rewards contract ids".format(len(contract_id_map))
-            )
-        except Exception as e:
-            self.log.error("Error fetching and parsing service node rewards contract id bls key map")
-            self.log.exception(e)
-        finally:
-            self.log.perf.end("fetch_service_node_rewards_contract_id_bls_key_map")
-            return contract_id_map
 
     def fetch_service_node_list(self):
         self.log.perf.start("fetch_service_node_list")
@@ -328,28 +321,32 @@ class App:
             nodes: list[ServiceNode] = res.get("service_node_states")
             self.log.debug("Fetched {} service nodes".format(len(nodes)))
 
-            # TODO: remove once contract_id is available via rpc.get_service_nodes
-            contract_id_map = self.db_reader.get_service_node_rewards_contract_id_bls_key_map()
+            new_sn_events = self.db_reader.get_arbitrum_events_by_name("NewServiceNodeV2",
+                                                                       from_block=self.last_new_sn_event + 1)
+            if len(new_sn_events) == 0:
+                self.log.warning("No new service node events found, waiting for new events")
+                return
+
+            for event in new_sn_events:
+                self.contract_id_map[parse_bls_pubkey(event.args["pubkey"])] = event.args["serviceNodeID"]
+                if event.block > self.last_new_sn_event:
+                    self.last_new_sn_event = event.block
 
             for node in nodes:
                 pubkey_bls = None
                 try:
-                    # TODO: remove once contract_id is available via rpc.get_service_nodes vv
-                    pubkey_bls = node.get("pubkey_bls")
-                    contract_id = contract_id_map.get(pubkey_bls)
-
                     if node.get("active"):
                         active_node_count += 1
 
-                    if contract_id is None:
+                    pubkey_bls = node.get("pubkey_bls")
+                    contract_id = self.contract_id_map.get(pubkey_bls)
+                    node["contract_id"] = contract_id
+
+                    if node["contract_id"] is None:
                         self.log.warning(
                             "Contract ID not found for node with BLS pubkey: {}".format(pubkey_bls)
                         )
-                    node["contract_id"] = contract_id
-                    # TODO: remove once contract_id is available via rpc.get_service_nodes ^^
-
-                    # contract_id = node.get("contract  _id")
-                    # assert contract_id is not None
+                    assert node["contract_id"] is not None
 
                     # Remove some fields that might appear if field:all is passed to the rpc
                     if "portions_for_operator" in node:
@@ -382,8 +379,6 @@ class App:
                         else None
                     )
 
-                    assert node["contract_id"] is not None
-
                     assert_all_dict_values_are_within_sqlite_integer_range(node)
 
                     for contributor in node.get("contributors", []):
@@ -405,12 +400,7 @@ class App:
                             )
 
                         except Exception as e:
-                            self.log.error(
-                                "Error processing contributor {} for node {}".format(
-                                    contributor_address,
-                                    pubkey_bls,
-                                )
-                            )
+                            self.log.error(f"Error processing contributor {contributor_address} for node {pubkey_bls}")
                             self.log.exception(e)
                             continue
 
@@ -460,7 +450,6 @@ class App:
         self.log.info("Update exit list task finish")
         self.log.perf.end("update_exit_list")
 
-
     def get_rewards_info(self):
         self.log.perf.start("update_rewards_details")
         self.log.debug("Update rewards details task start")
@@ -470,9 +459,10 @@ class App:
             accrued_rewards_json = self.rpc.get_accrued_rewards().get()
 
             assert accrued_rewards_json is not None, "Accrued rewards request failed"
-            assert accrued_rewards_json["status"] == "OK", "Accrued rewards request failed {}".format(accrued_rewards_json)
-            assert "balances" in accrued_rewards_json, "Accrued rewards request failed, 'balances' key was missing: {}".format(accrued_rewards_json)
-
+            assert accrued_rewards_json["status"] == "OK", "Accrued rewards request failed {}".format(
+                accrued_rewards_json)
+            assert "balances" in accrued_rewards_json, "Accrued rewards request failed, 'balances' key was missing: {}".format(
+                accrued_rewards_json)
 
             # Populate (Binary ETH wallet address -> accrued_rewards) table
             for address_hex, rewards in accrued_rewards_json.get("balances").items():
@@ -491,7 +481,6 @@ class App:
             self.log.perf.end("update_rewards_details")
             return rewards_info
 
-
     def update_arbitrum_details(self):
         try:
             self.log.perf.start("update_arbitrum_details")
@@ -501,13 +490,12 @@ class App:
             current_block = self.web3_client.web3.eth.block_number
             end_block = current_block - 1
 
-            contract_id_map = self.fetch_service_node_rewards_contract_id_bls_key_map()
-            self.db_writer.write_service_node_rewards_contract_id_bls_key_map(contract_id_map)
-
             service_node_rewards_balance = self.token_contract.balance_of(self.service_node_rewards.contract_address)
             reward_rate_pool_balance = self.token_contract.balance_of(self.reward_rate_pool.contract_address)
-            self.log.debug("Arbitrum info: service node rewards balance {}, reward rate pool balance {}".format(service_node_rewards_balance, reward_rate_pool_balance))
-            self.db_writer.write_arbitrum_info_to_db(current_block, service_node_rewards_balance, reward_rate_pool_balance)
+            self.log.debug("Arbitrum info: service node rewards balance {}, reward rate pool balance {}".format(
+                service_node_rewards_balance, reward_rate_pool_balance))
+            self.db_writer.write_arbitrum_info_to_db(current_block, service_node_rewards_balance,
+                                                     reward_rate_pool_balance)
 
             new_contribution_contracts, new_contribution_events = get_new_contribution_contracts(
                 self.web3_client,
@@ -536,7 +524,6 @@ class App:
             )
 
             events.extend(new_contribution_events)
-            batch_populate_events_with_block_timestamps(self.web3_client, self.log, events)
             populate_events_with_main_arg(events)
 
             self.db_writer.write_arbitrum_events_to_db(events)
@@ -549,10 +536,7 @@ class App:
                     self.web3_client, self.log, contrib_contract_list
                 )
 
-                node_add_timestamps, node_last_added_timestamps = self.update_arbitrum_node_event_timestamps()
-                self.db_writer.write_contribution_contracts_to_db(
-                    contract_details_list, contributions_list, node_add_timestamps, node_last_added_timestamps, self.contribution_contract_creation_timestamps
-                )
+                self.db_writer.write_contribution_contracts_to_db(contract_details_list, contributions_list)
             else:
                 self.log.info("No contribution contracts to write to db")
 
@@ -562,30 +546,3 @@ class App:
         except Exception as e:
             self.log.error("Error fetching and parsing arbitrum details")
             self.log.exception(e)
-
-
-    def update_arbitrum_node_event_timestamps(self):
-        recent_node_events = self.db_reader.get_arbitrum_events_since_timestamp([self.arbitrum_details_next_update_time, ['NewServiceNodeV2', 'ServiceNodeExit', 'ServiceNodeLiquidated', 'NewServiceNodeContributionContract']])
-        for event in recent_node_events:
-            if event.name == "NewServiceNodeContributionContract":
-                self.contribution_contract_creation_timestamps[event.main_arg] = event.timestamp
-            else:
-                pubkey_bls_encoded = event.args.get("pubkey")
-                pubkey_bls = "0x{}".format(parse_bls_pubkey((pubkey_bls_encoded["X"], pubkey_bls_encoded["Y"])))
-                if event.name == "NewServiceNodeV2":
-                    self.arbitrum_node_events_bls_key_to_events_timestamps_map.setdefault(pubkey_bls, {}).setdefault("add", []).append(event.timestamp)
-                elif event.name == "ServiceNodeExit" or event.name == "ServiceNodeLiquidated":
-                    self.arbitrum_node_events_bls_key_to_events_timestamps_map.setdefault(pubkey_bls, {}).setdefault("exit", []).append(event.timestamp)
-
-
-        node_add_timestamps = {}
-        node_last_added_timestamps = {}
-        for pubkey_bls, event_timestamps in self.arbitrum_node_events_bls_key_to_events_timestamps_map.items():
-            add_events = event_timestamps.get("add", [])
-            exit_events = event_timestamps.get("exit", [])
-            last_added_timestamp = max(add_events) if len(add_events) > 0 else None
-            node_last_added_timestamps[pubkey_bls] = last_added_timestamp
-            node_add_timestamps[pubkey_bls] = last_added_timestamp if len(add_events) > len(exit_events) else None
-
-        return node_add_timestamps, node_last_added_timestamps
-

@@ -87,6 +87,18 @@ class DBContributionMain:
 
 
 @dataclass
+class VestingContract:
+    address: str
+    beneficiary: str
+    initial_amount: int
+    initial_beneficiary: str
+    revoker: str
+    time_end: int
+    time_start: int
+    transferable_beneficiary: bool
+
+
+@dataclass
 class DBNetworkInfo:
     id: Optional[int]
     active_node_count: int
@@ -128,6 +140,7 @@ class DBContributionContract:
     status: int
     # Not in db but added after select
     contributors: list | None
+    events: list | None
 
 
 @dataclass
