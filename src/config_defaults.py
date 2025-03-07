@@ -85,12 +85,6 @@ class Backend:
     max_time_keeper_events:        int = 10_000
     rpc_fetcher_cache:             int = 1
     rpc_fetcher_usage_logging:    bool = False
-    stale_time_seconds:            int = 30
-    stale_time_seconds_contract_abis: int = 300
-    thread_pool_max_workers:       int = 50
-    web3_caller_address:    str | None = None
-    web3_private_key:       str | None = None
-    web3_provider_urls:      list[str] = ["http://localhost:8545"]  # Default hardhat private chain node address)
     write_rpc_fail_reasons_to_file: bool = False
 
     """
