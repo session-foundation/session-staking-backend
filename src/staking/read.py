@@ -3,7 +3,7 @@ from contextlib import closing
 
 from ..db.read import DBReader
 from .dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
-    DBContributionContractContribution, SmartContractABI, ArbitrumInfo
+    DBContributionContractContribution, SmartContractABI, ArbitrumInfo, VestingContract
 from ..util.parse import eth_format
 from ..web3client.event_scanner import ProcessedEvent
 
@@ -63,6 +63,16 @@ class DBReaderStaking(DBReader):
                 self.log.perf.end("get_last_fetched_arbitrum_event_block_height")
                 return fetched_block_height if fetched_block_height is not None else 0
 
+    def get_contribution_contract_contributors(self, address:str):
+        self.log.perf.start("get_contribution_contract_contributors")
+        with closing(self.connect()) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute("""SELECT * FROM contribution_contracts_contributions WHERE contract_address = ?""", (address,))
+                contributors = [DBContributionContractContribution(*contribution) for contribution in cursor.fetchall()]
+                self.log.debug("Contributors: {}".format(len(contributors)))
+                self.log.perf.end("get_contribution_contract_contributors")
+                return contributors
+
     def get_contribution_contracts(self):
         self.log.perf.start("get_contribution_contracts")
         with closing(self.connect()) as connection:
@@ -72,7 +82,7 @@ class DBReaderStaking(DBReader):
 
                 parsed_contracts = {}
                 for contract in contracts:
-                    contract_dict = DBContributionContract(*contract, contributors=[])
+                    contract_dict = DBContributionContract(*contract, contributors=[], events=[])
                     parsed_contracts[contract_dict.address] = contract_dict
 
                 cursor.execute(
@@ -89,7 +99,7 @@ class DBReaderStaking(DBReader):
 
                 self.log.debug("Parsed contribution contracts: {}".format(len(parsed_contracts)))
                 self.log.perf.end("get_contribution_contracts")
-                return list(parsed_contracts.values())
+                return parsed_contracts
 
     def get_contribution_contract_addresses(self):
         self.log.perf.start("get_contribution_contracts")
@@ -176,6 +186,23 @@ class DBReaderStaking(DBReader):
                 self.log.debug("Parsed nodes: {}".format(len(nodes_list)))
                 self.log.perf.end("get_nodes")
                 return list(parsed_nodes.values())
+
+    def get_contribution_addresses(self):
+        self.log.perf.start("get_contribution_addresses")
+        with closing(self.connect()) as connection:
+            with closing(connection.cursor()) as cursor:
+                addresses = set()
+                cursor.execute("""SELECT address, beneficiary from service_nodes_contributions_main""")
+                cursor.execute("""SELECT address, beneficiary from service_nodes_contributions_staging ORDER BY fetched_block_height ASC""")
+
+                for address, beneficiary in cursor.fetchall():
+                    addresses.add(address)
+                    if beneficiary is not None:
+                        addresses.add(beneficiary)
+
+                self.log.debug("Contribution addresses: {}".format(len(addresses)))
+                self.log.perf.end("get_contribution_addresses")
+                return addresses
 
     def get_rewards_info(self):
         self.log.perf.start("get_rewards_info")
@@ -280,6 +307,64 @@ class DBReaderStaking(DBReader):
                 self.log.perf.end("get_smart_contract_address")
                 return address[0]
 
+    def get_arbitrum_events(self, from_block = 0, names: list = None):
+        self.log.perf.start("get_arbitrum_events")
+        assert from_block >= 0, "from_block must be >= 0"
+        with closing(self.connect()) as connection:
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(f"Getting events from block {from_block} with names {names}")
+                if names is None:
+                    cursor.execute(
+                        """
+                        SELECT * FROM arbitrum_events WHERE block >= ?
+                        """,
+                        (from_block,),
+                    )
+                else:
+                    placeholder= '?' # For SQLite. See DBAPI paramstyle.
+                    placeholders= ', '.join(placeholder for unused in names)
+                    query= 'SELECT * FROM arbitrum_events WHERE block >= ? AND name IN ({})'.format(placeholders)
+                    cursor.execute(query, (from_block, *names))
+
+                events = [ProcessedEvent(*event) for event in cursor.fetchall()]
+                self.log.debug("Arbitrum events: {}".format(len(events)))
+                self.log.perf.end("get_arbitrum_events")
+                return events
+
+    def get_arbitrum_events_by_name(self, name: str, from_block = 0):
+        self.log.perf.start("get_arbitrum_events_by_name")
+        assert from_block >= 0, "from_block must be >= 0"
+        with closing(self.connect()) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM arbitrum_events WHERE name = ?
+                    """,
+                    (name,),
+                )
+                events = [ProcessedEvent(*event) for event in cursor.fetchall()]
+                self.log.debug("Arbitrum events: {}".format(len(events)))
+                self.log.perf.end("get_arbitrum_events_by_name")
+                return events
+
+    def get_arbitrum_event_main_args_by_name(self, name: str, from_block = 0):
+        self.log.perf.start("get_arbitrum_event_main_args_by_name")
+        assert from_block >= 0, "from_block must be >= 0"
+        with closing(self.connect()) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT main_arg FROM arbitrum_events WHERE name = ? AND block >= ?
+                    """,
+                    (name, from_block),
+                )
+                events = cursor.fetchall()
+                addresses = [event[0] for event in events]
+                self.log.debug("Arbitrum Event Args: {}".format(len(addresses)))
+                self.log.perf.end("get_arbitrum_event_main_args_by_name")
+                return addresses
+
+
     def get_arbitrum_events_page(self, args=None):
         if args is None:
             args = [1000, 0]
@@ -303,36 +388,6 @@ class DBReaderStaking(DBReader):
                 total = cursor.fetchone()[0]
 
                 return events, limit, skip, total
-
-    def get_arbitrum_events_since_timestamp(self, params: [int, list[str] | None]) -> list[ProcessedEvent]:
-        timestamp = params[0] if len(params) > 0 else None
-        events_types = params[1] if len(params) > 1 and len(params[1]) > 0 else None
-
-        if timestamp is None or (not isinstance(timestamp, int) and not isinstance(timestamp, float)):
-            raise ValueError("Invalid timestamp, timestamp must be an integer or float")
-
-        if events_types is not None:
-            if isinstance(events_types, str):
-                events_types = [events_types]
-            elif not isinstance(events_types, list):
-                raise ValueError("Invalid events_types, events_types must be a list of strings or a string")
-
-
-        self.log.perf.start("get_arbitrum_events_since_timestamp")
-        with closing(self.connect()) as connection:
-            with closing(connection.cursor()) as cursor:
-                if events_types is None:
-                    cursor.execute("SELECT * FROM arbitrum_events WHERE timestamp > ? ORDER BY timestamp DESC", (timestamp,))
-                else:
-                    placeholder= '?' # For SQLite. See DBAPI paramstyle.
-                    placeholders= ', '.join(placeholder for unused in events_types)
-                    query= 'SELECT * FROM arbitrum_events WHERE timestamp > ? AND name IN (%s) ORDER BY timestamp DESC' % placeholders
-                    cursor.execute(query, (timestamp, *events_types))
-                    # cursor.execute("SELECT * FROM arbitrum_events WHERE timestamp > ? AND name IN ({}) ORDER BY timestamp DESC".format(",".join(["?"]*len(events_types))), tuple(events_types)+(timestamp,))
-                events = [ProcessedEvent(*event) for event in cursor.fetchall()]
-                self.log.debug("Arbitrum events: {}".format(len(events)))
-                self.log.perf.end("get_arbitrum_events_since_timestamp")
-                return events
 
     def get_arbitrum_info(self):
         self.log.perf.start("get_arbitrum_info")
@@ -360,19 +415,30 @@ class DBReaderStaking(DBReader):
                 self.log.perf.end("get_events_for_stake_contrat_id")
                 return events
 
-    def get_service_node_rewards_contract_id_bls_key_map(self):
-        self.log.perf.start("get_service_node_rewards_contract_id_bls_key_map")
+    def get_vesting_contracts(self) -> list[VestingContract]:
+        self.log.perf.start("get_vesting_contracts")
         with closing(self.connect()) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
-                    SELECT contract_id, pubkey_bls FROM service_node_rewards_contract_id_bls_key_map
+                    SELECT * FROM vesting_contracts
                     """
                 )
-                contract_id_map = {
-                    pubkey_bls: contract_id
-                    for contract_id, pubkey_bls in cursor.fetchall()
-                }
-                self.log.debug("Service node rewards contract id bls key map: {}".format(len(contract_id_map)))
-                self.log.perf.end("get_service_node_rewards_contract_id_bls_key_map")
-                return contract_id_map
+                contracts = [VestingContract(*contract) for contract in cursor.fetchall()]
+                self.log.debug("Vesting contracts: {}".format(len(contracts)))
+                self.log.perf.end("get_vesting_contracts")
+                return contracts
+
+    def has_vesting_contracts(self) -> bool:
+        self.log.perf.start("has_vesting_contracts")
+        with closing(self.connect()) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) FROM vesting_contracts
+                    """
+                )
+                count = cursor.fetchone()[0]
+                self.log.debug("Vesting contracts: {}".format(count))
+                self.log.perf.end("has_vesting_contracts")
+                return count > 0

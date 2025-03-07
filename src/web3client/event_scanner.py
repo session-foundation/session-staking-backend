@@ -28,9 +28,9 @@ logger.setLevel(logging.DEBUG)
 class ProcessedEvent:
     args: dict
     block: int
+    log_index: int
     main_arg: str | None
     name: str
-    timestamp: None | int
     tx: str
 
     def __post_init__(self):

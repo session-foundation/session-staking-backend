@@ -13,10 +13,12 @@ from werkzeug.routing import BaseConverter
 eth_regex = "0x[0-9a-fA-F]{40}"
 
 
-def parse_bls_pubkey(bls_pubkey: (str, str)):
-    x, y = bls_pubkey
+def parse_bls_pubkey(bls_pubkey: dict):
+    x, y = bls_pubkey["X"], bls_pubkey["Y"]
     return f"{x:064x}{y:064x}"
 
+def parse_ed25519_pubkey(ed25519_pubkey: int):
+    return f"{ed25519_pubkey:032x}"
 
 def raw_eth_addr(k, v):
     if re.fullmatch(eth_regex, v):
@@ -25,6 +27,24 @@ def raw_eth_addr(k, v):
         return bytes.fromhex(v[2:])
     raise ParseError(k, "not an ETH address")
 
+def get_relative_time_from_ms(ms: int, short: bool = False, include_suffix = False):
+    if include_suffix:
+        prefix, suffix = ("in ", "") if ms > 0 else ("", " ago")
+    else:
+        prefix, suffix = "", ""
+
+    if ms < 1000:
+        time = f"{ms} {"ms" if short else "milliseconds"}"
+    elif ms < 1000 * 60:
+        time = f"{ms // 1000} {"s" if short else "seconds"}"
+    elif ms < 1000 * 60 * 60:
+        time = f"{ms // (1000 * 60)} {"m" if short else "minutes"}"
+    elif ms < 1000 * 60 * 60 * 24:
+        time = f"{ms // (1000 * 60 * 60)} {"h" if short else "hours"}"
+    else:
+        time = f"{ms // (1000 * 60 * 60 * 24)} {"d" if short else "days"}"
+
+    return f"{prefix}{time}{suffix}"
 
 def hexify(container):
     """

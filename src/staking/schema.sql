@@ -162,41 +162,34 @@ CREATE INDEX arbitrum_info_block_idx ON arbitrum_info(block DESC);
 CREATE TABLE arbitrum_events (
     args TEXT NOT NULL,
     block INTEGER NOT NULL,
+    log_index INTEGER NOT NULL,
     main_arg TEXT,
     name TEXT NOT NULL,
-    timestamp INTEGER NOT NULL,
     tx TEXT NOT NULL,
-    PRIMARY KEY (block, tx, name)
+    PRIMARY KEY (log_index, tx)
 );
 
 CREATE INDEX arbitrum_events_block_idx ON arbitrum_events(block DESC);
-CREATE INDEX arbitrum_events_block_timestamp ON arbitrum_events(timestamp DESC);
 CREATE INDEX arbitrum_events_main_arg_idx ON arbitrum_events(main_arg, block DESC);
 
 CREATE TABLE contribution_contracts (
     address TEXT NOT NULL,
-    created_timestamp INTEGER,
-    fee INTEGER NOT NULL,
-    last_added_timestamp INTEGER,
-    manual_finalize BOOLEAN NOT NULL,
-    node_add_timestamp INTEGER,
-    operator_address TEXT NOT NULL,
-    pubkey_bls BLOB NOT NULL,
-    service_node_pubkey BLOB NOT NULL,
-    service_node_signature BLOB NOT NULL,
-    status INTEGER NOT NULL,
+    fee INTEGER,
+    manual_finalize BOOLEAN,
+    operator_address TEXT,
+    pubkey_bls BLOB,
+    service_node_pubkey BLOB,
+    status INTEGER NOT NULL DEFAULT 0,
 
     PRIMARY KEY (address)
 );
 
 CREATE INDEX contribution_contracts_address_idx ON contribution_contracts(address);
-CREATE INDEX contribution_contracts_node_add_timestamp_idx ON contribution_contracts(node_add_timestamp DESC);
 
-CREATE TABLE contribution_contracts_contributions
-(
+CREATE TABLE contribution_contracts_contributions (
     address             BLOB    NOT NULL,
-    amount              INTEGER NOT NULL,
-    beneficiary_address BLOB    NOT NULL,
+    amount              INTEGER NOT NULL DEFAULT 0,
+    beneficiary_address BLOB,
     contract_address    BLOB    NOT NULL,
     reserved            INTEGER,
 
@@ -223,11 +216,17 @@ CREATE TABLE smart_contracts (
     foreign key (name) references smart_contract_abis(name)
 );
 
-CREATE TABLE service_node_rewards_contract_id_bls_key_map (
-    contract_id INTEGER NOT NULL,
-    pubkey_bls BLOB NOT NULL,
+CREATE TABLE vesting_contracts (
+    address TEXT NOT NULL,
+    beneficiary TEXT NOT NULL,
+    initial_amount INTEGER NOT NULL,
+    initial_beneficiary TEXT NOT NULL,
+    revoker TEXT NOT NULL,
+    time_end INTEGER NOT NULL,
+    time_start INTEGER NOT NULL,
+    transferable_beneficiary BOOLEAN NOT NULL,
 
-    PRIMARY KEY (contract_id)
+    PRIMARY KEY (address)
 );
 
-CREATE INDEX service_node_rewards_contract_id_bls_key_map_pubkey_bls_idx ON service_node_rewards_contract_id_bls_key_map(pubkey_bls);
+CREATE INDEX vesting_contracts_beneficiary_idx ON vesting_contracts(beneficiary);
