@@ -5,7 +5,7 @@ from .dataclasses import PriceDB
 
 
 class CoinGeckoTokenPriceRequest:
-    def __init__(self, logger: logging, key: str, url: str, token_ids: list[str], include_market_cap: bool = True, include_last_updated_at: bool = True):
+    def __init__(self, logger: logging, key: str, url: str, token_ids: list[str], include_market_cap: bool = True, include_last_updated_at: bool = True, precision: int = 9):
         self.log = logger
         self.token_ids = token_ids
         self.headers = {
@@ -23,6 +23,10 @@ class CoinGeckoTokenPriceRequest:
 
         if include_last_updated_at:
             query_params["include_last_updated_at"] = "true"
+
+        if precision is not None:
+            assert precision > 0
+            query_params["precision"] = precision
 
         query_string = "&".join([f"{key}={value}" for key, value in query_params.items()])
         self.url = f"{url}/v3/simple/price?{query_string}"

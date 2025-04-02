@@ -24,6 +24,7 @@ class PriceAppConfig(FlaskAppConfig):
     coingecko_api_key: str = None
     coingecko_api_url: str = None
     coingecko_api_token_ids: list[str] = None
+    coingecko_precision: int = None
 
     # Route Config
     coingecko_api_rate_poll_rate_seconds: int = None
@@ -59,6 +60,7 @@ class App(FlaskApp):
                 token_ids=config.coingecko_api_token_ids,
                 include_market_cap=True,
                 include_last_updated_at=True,
+                precision=config.coingecko_precision,
             )
 
         self.price_poll_rate_seconds = config.coingecko_api_rate_poll_rate_seconds if config.coingecko_api_rate_poll_rate_seconds is not None else 0

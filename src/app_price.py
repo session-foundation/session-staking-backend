@@ -15,6 +15,7 @@ price_config = PriceAppConfig(
     coingecko_api_rate_poll_rate_seconds=config.backend.prices_api_refetch_interval_seconds,
     default_token=config.backend.prices_api_default_token,
     enable_price_fetcher=config.backend.enable_price_fetcher,
+    coingecko_precision=config.backend.coingecko_precision,
 )
 
 app = create_app(price_config)
