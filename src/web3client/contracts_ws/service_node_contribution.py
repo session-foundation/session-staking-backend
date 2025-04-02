@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from eth_typing import ChecksumAddress
 from web3 import AsyncWeb3
+from web3.contract.async_contract import AsyncContractEvent
 from web3.types import EventData
 from web3.utils.subscriptions import EthSubscriptionContext
 
@@ -37,15 +38,19 @@ class ContributionContract:
         self.log.debug(f"Initialized {self.address} with Contributors: {self._contributors}")
 
     def update_status(self, status: int):
+        self.log.debug(f"Updating status of {self.address} to {status}")
         self.db_writer.write_update_contribution_contract_status(self.address, status)
 
     def update_manual_finalize(self, new_value: bool):
+        self.log.debug(f"Updating manual finalize of {self.address} to {new_value}")
         self.db_writer.write_update_contribution_contract_manual_finalize(self.address, new_value)
 
     def update_fee(self, new_fee: int):
+        self.log.debug(f"Updating fee of {self.address} to {new_fee}")
         self.db_writer.write_update_contribution_contract_fee(self.address, new_fee)
 
     def update_pubkeys(self, new_bls_pubkey: dict, new_ed25519_pubkey: int):
+        self.log.debug(f"Updating pubkeys of {self.address} to {new_bls_pubkey}, {new_ed25519_pubkey}")
         if new_bls_pubkey is None:
             self.log.warning(f"No new BLS pubkey found for {self.address}")
             return
@@ -61,12 +66,14 @@ class ContributionContract:
         self._contributors.setdefault(address, ContributionContractContributor(address))
 
     def update_contributor_new_contribution(self, address: str, amount: int):
+        self.log.debug(f"Updating contributor add {address} with amount {amount}")
         self._upsert_contributor(address)
         self._contributors[address].address = address
         self._contributors[address].amount += amount
         self.db_writer.write_update_contribution_contract_contributor(self.address, self._contributors[address])
 
     def update_contributor_withdraw_contribution(self, address: str, amount: int):
+        self.log.debug(f"Updating contributor remove {address} with amount {amount}")
         if address in self._contributors:
             self._contributors[address].amount -= amount
             if self._contributors[address].amount == 0:
@@ -78,24 +85,29 @@ class ContributionContract:
             self.log.warning(f"No contributor found for address {address} to withdraw {amount}")
 
     def update_contributor_beneficiary(self, address: str, beneficiary_address: str):
+        self.log.debug(f"Updating contributor beneficiary {address} to {beneficiary_address}")
         self._upsert_contributor(address)
         self._contributors[address].beneficiary_address = beneficiary_address
         self.db_writer.write_update_contribution_contract_contributor(self.address, self._contributors[address])
 
     def update_reserved_contributors(self, reserved_contributors: list[dict[str, str]]):
+        self.log.debug(f"Updating reserved contributors {reserved_contributors}")
         for reserved_contributor in reserved_contributors:
             address = reserved_contributor.get("addr")
             reserved_amount = reserved_contributor.get("amount")
             self._upsert_contributor(address)
             self._contributors[address].reserved = reserved_amount
+            self.db_writer.write_update_contribution_contract_contributor(self.address, self._contributors[address])
 
     def update_reset(self):
+        self.log.debug(f"Updating reset for {self.address}")
         self._contributors = {}
+        self.db_writer.write_delete_all_contribution_contract_contributors(self.address)
         self.update_status(0)
-        self.update_reserved_contributors([])
 
     def process_event(self, raw_event: EventData):
         event = create_processed_event(raw_event, main_arg=self.address)
+        self.log.debug(f"Processing sn event: {event}")
         match event.name:
             case "OpenForPublicContribution":
                 return self.update_status(1)
@@ -147,12 +159,11 @@ class ServiceNodeContribution(ContractWS):
         "Filled",
         "WithdrawContribution",
         "UpdateStakerBeneficiary",
-        # TODO: uncomment when these events exist in the contract
-        # "UpdateManualFinalize",
-        # "UpdateFee",
-        # "UpdatePubkeys",
-        # "UpdateReservedContributors",
-        # "Reset",
+        "UpdateManualFinalize",
+        "UpdateFee",
+        "UpdatePubkeys",
+        "UpdateReservedContributors",
+        "Reset",
     ]
 
     def __init__(self, w3: AsyncWeb3, db_writer: DBWriterStaking, db_reader: DBReaderStaking, log: logging,
@@ -172,9 +183,13 @@ class ServiceNodeContribution(ContractWS):
     async def handle_event_sub(self, event: EthSubscriptionContext):
         return await self.handle_event(self._parse_event(event))
 
-    def create_subscriptions(self, address: ChecksumAddress | list[ChecksumAddress]):
+
+    def get_events(self, address: ChecksumAddress) -> list[AsyncContractEvent]:
         events = self.factory(address[0] if isinstance(address, list) else address).events
-        event_list = [events[name] for name in self.event_names]
+        return [events[name] for name in self.event_names]
+
+    def create_subscriptions(self, address: ChecksumAddress | list[ChecksumAddress], start_block: int = 0):
+        event_list = self.get_events(address)
 
         for event in event_list:
             event.address = address
@@ -185,6 +200,7 @@ class ServiceNodeContribution(ContractWS):
             event_abis=self.event_abis,
             handler_sub=self.handle_event_sub,
             handler_past=self.handle_event,
+            start_block=start_block,
         )
 
     batch_items = 7

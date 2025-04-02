@@ -5,7 +5,7 @@ import pathlib
 SOLC_VERSION = "0.8.26"
 install_solc(SOLC_VERSION)
 
-base_path = pathlib.Path(__file__).parent.parent.parent.parent.joinpath("session-token-contracts")
+base_path = pathlib.Path(__file__).parent.parent.parent.joinpath("session-token-contracts")
 
 subprocess.run(["pnpm", "install"], cwd=base_path)
 

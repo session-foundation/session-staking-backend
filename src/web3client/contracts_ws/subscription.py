@@ -15,7 +15,8 @@ def create_subscriptions(
         event_queue: EventQueueManager,
         handler_sub: Callable,
         handler_past: Callable = None,
-        event_abis: dict[str, any] = None
+        event_abis: dict[str, any] = None,
+        start_block: int = None,
 ):
     assert isinstance(event_queue, EventQueueManager), "event_queue must be an instance of EventQueueManager"
     for event in events:
@@ -25,6 +26,7 @@ def create_subscriptions(
         event_queue.add(
             event=event,
             handler=handler_past,
+            start_block=start_block,
             sub=LogsSubscription(
                 label=label,
                 address=event.address,
@@ -35,7 +37,6 @@ def create_subscriptions(
 
         if event.name not in event_abis:
             event_abis[event.name] = event._get_event_abi()
-
 
 def parse_event(event_abis, event: EthSubscriptionContext):
     result = event.result

@@ -8,7 +8,7 @@ from web3.utils.subscriptions import EthSubscriptionContext
 
 from src.staking.write import DBWriterStaking
 from src.web3client.contracts_ws.contract_ws import ContractWS
-from src.web3client.contracts_ws.subscription import create_subscriptions
+from src.web3client.contracts_ws.subscription import create_subscriptions, create_processed_event
 from src.web3client.event_queue_manager import EventQueueManager
 
 
@@ -21,6 +21,9 @@ class TokenVestingStaking(ContractWS):
 
     async def handle_event(self, event: EventData):
         await self._handle_event(event, main_arg=event.address)
+        if event.get("event") == "BeneficiaryTransferred":
+            to_address = event.get("args").get("newBeneficiary")
+            self.db_writer.write_update_vesting_contract_beneficiary(event.address, to_address)
 
     async def handle_event_sub(self, event: EthSubscriptionContext):
         await self.handle_event(self._parse_event(event))

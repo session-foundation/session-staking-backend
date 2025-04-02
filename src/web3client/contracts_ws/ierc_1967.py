@@ -2,6 +2,7 @@ import logging
 
 from eth_typing import ChecksumAddress
 from web3 import AsyncWeb3
+from web3.contract.async_contract import AsyncContractEvent
 
 from src.staking.write import DBWriterStaking
 from src.web3client.contracts_ws.contract_ws import ContractWS
@@ -16,13 +17,16 @@ class IERC1967(ContractWS):
                  event_queue: EventQueueManager | None = None):
         super().__init__(self.name, w3, db_writer, log, event_queue)
 
-    def create_subscriptions(self, address: ChecksumAddress | list[ChecksumAddress]):
+    def get_events(self, address: ChecksumAddress | list[ChecksumAddress]) -> list[AsyncContractEvent]:
         events = self.factory(address[0] if isinstance(address, list) else address).events
-        event_list = [
+        return [
             events.Upgraded,
             events.AdminChanged,
             events.BeaconUpgraded,
         ]
+
+    def create_subscriptions(self, address: ChecksumAddress | list[ChecksumAddress]):
+        event_list = self.get_events(address)
 
         for event in event_list:
             event.address = address

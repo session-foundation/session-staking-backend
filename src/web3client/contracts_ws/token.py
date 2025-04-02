@@ -2,6 +2,7 @@ import logging
 
 from eth_typing import ChecksumAddress
 from web3 import AsyncWeb3
+from web3.contract.async_contract import AsyncContractEvent
 from web3.types import EventData
 from web3.utils.subscriptions import EthSubscriptionContext
 
@@ -51,13 +52,16 @@ class Token(ContractWS):
     async def handle_event_sub(self, event: EthSubscriptionContext):
         return await self.handle_event(self._parse_event(event))
 
-    def create_subscriptions(self, address: ChecksumAddress):
+    def get_events(self, address: ChecksumAddress) -> list[AsyncContractEvent]:
         events = self.factory(address).events
+        return [
+            events.Transfer,
+            events.Approval,
+        ]
+
+    def create_subscriptions(self, address: ChecksumAddress):
         return create_subscriptions(
-            events=[
-                events.Transfer,
-                events.Approval,
-            ],
+            events=self.get_events(address),
             event_queue=self.event_queue,
             event_abis=self.event_abis,
             handler_sub=self.handle_event_sub,
