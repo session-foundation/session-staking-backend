@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 from dataclasses import dataclass
 
+import flask
+
 from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
 from .coingecko import CoinGeckoTokenPriceRequest
-from .read import DBReaderPrices
+from .read import get_latest_price
 from .dataclasses import PriceDB
-from .write import DBWriterPrices
+from .write import write_prices_to_db
 from ..db.util import is_db_initialized, init_db
 
 
@@ -21,12 +23,10 @@ class PriceAppConfig(FlaskAppConfig):
     coingecko_api_key: str = None
     coingecko_api_url: str = None
     coingecko_api_token_ids: list[str] = None
-    coingecko_api_currencies: list[str] = None
 
     # Route Config
     coingecko_api_rate_poll_rate_seconds: int = None
     default_token: str = None
-    default_currency: str = None
 
 
 class App(FlaskApp):
@@ -36,24 +36,19 @@ class App(FlaskApp):
 
         if config.enable_price_fetcher:
             self.log.info(f"Price fetcher enabled, fetching from {config.coingecko_api_url}")
-            if is_db_initialized(config.sqlite_db):
+            if not is_db_initialized(config.sqlite_db):
                 self.log.info(f"Initializing database {config.sqlite_db} with schema {config.sqlite_schema}")
                 init_db(config.sqlite_db, config.sqlite_schema)
-            self.db_writer_prices = DBWriterPrices(
-                db_path=config.sqlite_db,
-                log_level=config.log_level,
-                perf=config.enable_perf,
-            )
         else:
-            self.log.info("Price fetcher disabled. No API url provided.")
+            self.log.info("Price fetcher disabled. Set enable_price_fetcher to True to enable price fetcher.")
 
+        if not config.default_token:
+            config.default_token = config.coingecko_api_token_ids[0]
+            self.log.warning(f"No default token set, using {config.default_token}")
+        else:
+            self.log.info(f"Default token set to {config.default_token}")
 
-        self.db_reader_prices = DBReaderPrices(
-            db_path=config.sqlite_db,
-            log_level=config.log_level,
-            perf=config.enable_perf,
-            disable_db_file_rewrite=config.disable_db_file_rewrite,
-        )
+        self.db_path = config.sqlite_db
 
         if config.enable_price_fetcher:
             self.token_price_request = CoinGeckoTokenPriceRequest(
@@ -61,7 +56,6 @@ class App(FlaskApp):
                 key=config.coingecko_api_key,
                 url=config.coingecko_api_url,
                 token_ids=config.coingecko_api_token_ids,
-                currencies=config.coingecko_api_currencies,
                 include_market_cap=True,
                 include_last_updated_at=True,
             )
@@ -73,43 +67,26 @@ class App(FlaskApp):
     def get_token_price_cache_key(token: str):
         return f"price-{token}-all"
 
-    def get_token_info_cached(self, token: str):
-        key = App.get_token_price_cache_key(token)
+    def get_price_for_token_uncached(self, token: str):
+        return get_latest_price(self.db_path, token)
 
-        data: list[PriceDB] | None = self.cache.get_cached_only(key)
-
-        if data:
-            return data
-
-        data = self.db_reader_prices.get_latest_prices(token)
-
-        updated_at = data[0].updated_at
-
-        stale_time = updated_at + self.price_poll_rate_seconds
-        self.cache.set_cache_value(key, data, invalidate_timestamp=stale_time)
-        return data
-
-    def get_price_for_token_uncached(self, params: [str, str]):
-        for price in self.get_token_info_cached(params[0]):
-            if price.currency == params[1]:
-                return price
-        return None
-
-    def get_price_for_token_cached(self, token: str, currency: str) -> PriceDB | None:
-        return self.cache.get(f"price-{token}-{currency}", getter=self.get_price_for_token_uncached,
-                              getter_args=[token, currency], ttl=1)
+    def get_price_for_token_cached(self, token: str) -> PriceDB | None:
+        return self.cache.get(self.get_token_price_cache_key(token), getter=self.get_price_for_token_uncached,
+                              getter_args=token, ttl=1)
 
     def get_token_price_info(self, token: str = None):
         if token is None:
             token = self.app_config.default_token
 
-        data = self.get_price_for_token_cached(token, self.app_config.default_currency)
+        if token not in self.app_config.coingecko_api_token_ids:
+            return flask.abort(404, f"Token {token} not found!")
+
+        data = self.get_price_for_token_cached(token)
 
         if data is None:
-            return json_response({"error": "Failed to fetch price"})
+            return flask.abort(500, f"Failed to fetch price for token {token}")
 
-        key = App.get_token_price_cache_key(token)
-        stale_time = self.cache.get_stale_timestamp(key)
+        stale_time = self.cache.get_stale_timestamp(self.get_token_price_cache_key(token))
 
         return {
             "usd": data.price,
@@ -161,7 +138,7 @@ def create_app(config: PriceAppConfig) -> App:
             app.logger.info("Fetch token price info start")
             data = app.token_price_request.get()
             formatted_data = app.token_price_request.format_for_db(data)
-            app.db_writer_prices.write_prices_to_db(formatted_data)
+            write_prices_to_db(app.db_path, formatted_data)
             app.logger.info("Fetch token price info finish")
 
         fetch_token_price_info(None)
