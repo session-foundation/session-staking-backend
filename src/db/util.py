@@ -30,3 +30,16 @@ def assert_all_dict_values_are_within_sqlite_integer_range(node: dict):
             assert (
                 SQLITE_MIN_INT <= value <= SQLITE_MAX_INT
             ), f"Integer value {value} for key '{key}' in dict is out of SQLite integer range."
+
+
+def sql_connect_in_read_mode(db_path: str):
+    if not db_path.startswith("file:"):
+        db_path = "file:" + db_path
+
+    if not db_path.endswith("?mode=ro"):
+        db_path = db_path + "?mode=ro"
+
+    return sqlite3.connect(db_path, uri=True)
+
+def sql_connect_in_write_mode(db_path: str): # Maybe dubious, but perhaps good for API symmetry, I'll defer to you
+    return sqlite3.connect(db_path)
