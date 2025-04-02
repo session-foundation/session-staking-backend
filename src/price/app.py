@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from dataclasses import dataclass
+from math import trunc
 
 import flask
 
@@ -86,7 +87,7 @@ class App(FlaskApp):
         if data is None:
             return flask.abort(500, f"Failed to fetch price for token {token}")
 
-        stale_time = self.cache.get_stale_timestamp(self.get_token_price_cache_key(token))
+        stale_time = trunc(self.cache.get_stale_timestamp(self.get_token_price_cache_key(token)))
 
         return {
             "usd": data.price,
