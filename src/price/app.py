@@ -27,7 +27,7 @@ class PriceAppConfig(FlaskAppConfig):
     coingecko_precision: int = None
 
     # Route Config
-    coingecko_api_rate_poll_rate_seconds: int = None
+    price_poll_rate_seconds: int = None
     default_token: str = None
 
 
@@ -63,19 +63,30 @@ class App(FlaskApp):
                 precision=config.coingecko_precision,
             )
 
-        self.price_poll_rate_seconds = config.coingecko_api_rate_poll_rate_seconds if config.coingecko_api_rate_poll_rate_seconds is not None else 0
+        self.price_poll_rate_seconds = config.price_poll_rate_seconds if config.price_poll_rate_seconds is not None else 0
 
 
     @staticmethod
     def get_token_price_cache_key(token: str):
         return f"price-{token}-all"
 
-    def get_price_for_token_uncached(self, token: str):
-        return get_latest_price(self.db_path, token)
 
     def get_price_for_token_cached(self, token: str) -> PriceDB | None:
-        return self.cache.get(self.get_token_price_cache_key(token), getter=self.get_price_for_token_uncached,
-                              getter_args=token, ttl=1)
+        key = self.get_token_price_cache_key(token)
+        value = self.cache.get_cached_only(key)
+
+        if value is None:
+            value = get_latest_price(self.db_path, token)
+
+        if value is None:
+            return None
+
+        invalidate_timestamp = value.updated_at + self.app_config.price_poll_rate_seconds
+
+        self.cache.set_cache_value(key, value, ttl=self.app_config.price_poll_rate_seconds, invalidate_timestamp=invalidate_timestamp)
+
+        return value
+
 
     def get_token_price_info(self, token: str = None):
         if token is None:
