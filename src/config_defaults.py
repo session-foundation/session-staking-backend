@@ -43,6 +43,7 @@ class Backend:
     # so this is the first block that can be used to scan for events. Using 0 significantly slows down the scan.
     # genesis_block:                 int = 114505919
     genesis_block:                 int = 114500919
+    contrib_factory_start_block:   int = 142785134
 
     """
     DB CONFIG

@@ -3,6 +3,8 @@ import json
 import subprocess
 import time
 
+import eth_utils
+
 from ..config_validate import validate_log_config, validate_contract_addresses, validate_web3_client, validate_oxen_rpc
 from ..staking.arbitrum import (
     get_new_contribution_contracts,
@@ -21,7 +23,7 @@ from ..log import Log
 from ..oxen.rpc import ServiceNode, OxenRPC, NetworkInfo
 from ..util import format_seconds
 from ..log.time_keeper import TimeKeeper
-from ..util.parse import parse_bls_pubkey
+from ..util.parse import parse_bls_pubkey, eth_format
 from ..web3client.abi_manager import ABIManager
 from ..web3client.client import Web3Client
 from ..web3client.contracts.reward_rate_pool import RewardRatePoolInterface
@@ -187,6 +189,8 @@ class App:
         t1_event_loop_exception_count = 0
         t2_event_loop_exception_count = 0
         try:
+            network = self.rpc.get_network_info_from_network()
+            self.update_network_details_and_nodes(network)
             while True:
                 try:
                     self.log.perf.start("loop")
@@ -292,13 +296,13 @@ class App:
             network: NetworkInfo,
     ):
         self.log.info("Update service node list task start")
-        parsed_nodes, contributor_stake_map, current_height, node_count, active_node_count = self.fetch_service_node_list()
+        parsed_nodes, contributor_stake_map, current_height, node_count, total_staked, active_node_count = self.fetch_service_node_list()
 
         self.db_writer.write_nodes_to_staging_db(
             current_height, parsed_nodes, contributor_stake_map
         )
 
-        self.db_writer.write_network_info_to_db(network=network, node_count=node_count,
+        self.db_writer.write_network_info_to_db(network=network, node_count=node_count, total_staked=total_staked,
                                                 active_node_count=active_node_count)
 
         rewards_info = self.get_rewards_info()
@@ -312,6 +316,7 @@ class App:
         parsed_nodes = []
         contributions = []
         active_node_count = 0
+        total_staked = 0
 
         try:
             res = self.rpc.get_service_nodes().get()
@@ -379,6 +384,9 @@ class App:
                         else None
                     )
 
+                    node_staked = node.get("total_contributed", 0)
+                    total_staked += node_staked
+
                     assert_all_dict_values_are_within_sqlite_integer_range(node)
 
                     for contributor in node.get("contributors", []):
@@ -416,7 +424,7 @@ class App:
             self.log.exception(e)
         finally:
             self.log.perf.end("update_service_node_list")
-            return parsed_nodes, contributions, current_height, len(parsed_nodes), active_node_count
+            return parsed_nodes, contributions, current_height, len(parsed_nodes), total_staked, active_node_count
 
     def update_exit_list(self):
         self.log.perf.start("update_exit_list")
@@ -455,24 +463,43 @@ class App:
         self.log.debug("Update rewards details task start")
         rewards_info = []
         try:
-            # Get the accrued rewards values for each wallet
             accrued_rewards_json = self.rpc.get_accrued_rewards().get()
 
             assert accrued_rewards_json is not None, "Accrued rewards request failed"
             assert accrued_rewards_json["status"] == "OK", "Accrued rewards request failed {}".format(
                 accrued_rewards_json)
+
             assert "balances" in accrued_rewards_json, "Accrued rewards request failed, 'balances' key was missing: {}".format(
                 accrued_rewards_json)
 
             # Populate (Binary ETH wallet address -> accrued_rewards) table
-            for address_hex, rewards in accrued_rewards_json.get("balances").items():
+            for balance in accrued_rewards_json.get("balances", []):
                 # Ignore non-ethereum addresses (e.g. left oxen rewards, not relevant)
-                address = address_hex if address_hex.startswith("0x") else "0x" + address_hex
-                if len(address) != 42:
+                address = balance.get("address")
+                if address is None or not eth_utils.is_address(address):
                     self.log.warning("Invalid address {}".format(address))
                     continue
 
-                rewards_info.append(RewardsInfo(address, rewards))
+                address = eth_format(address)
+
+                amount = balance.get("amount")
+                lifetime_liquidated_stakes = balance.get("lifetime_liquidated_stakes")
+                lifetime_locked_stakes = balance.get("lifetime_locked_stakes")
+                lifetime_rewards = balance.get("lifetime_rewards")
+                lifetime_unlocked_stakes = balance.get("lifetime_unlocked_stakes")
+                locked_stakes = balance.get("locked_stakes")
+                timelocked_stakes = balance.get("timelocked_stakes")
+
+                rewards_info.append(RewardsInfo(
+                    address=address,
+                    amount=amount,
+                    lifetime_liquidated_stakes=lifetime_liquidated_stakes,
+                    lifetime_locked_stakes=lifetime_locked_stakes,
+                    lifetime_rewards=lifetime_rewards,
+                    lifetime_unlocked_stakes=lifetime_unlocked_stakes,
+                    locked_stakes=locked_stakes,
+                    timelocked_stakes=timelocked_stakes,
+                ))
 
         except Exception as e:
             self.log.error("Error fetching and parsing rewards details")

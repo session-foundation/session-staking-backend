@@ -21,7 +21,7 @@ class RegistrationAppConfig(FlaskAppConfig):
     sqlite_schema: str = None
 
     # Route Config
-    coingecko_api_rate_poll_rate_seconds: int = None
+    price_poll_rate_seconds: int = None
     default_token: str = None
     default_currency: str = None
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import dataclasses
+import math
 from dataclasses import dataclass
 import statistics
 
@@ -9,7 +10,7 @@ from eth_typing import ChecksumAddress
 from uwsgidecorators import timer
 from werkzeug.exceptions import GatewayTimeout
 
-from .dataclasses import ArbitrumInfo
+from .dataclasses import ArbitrumInfo, RewardsInfo
 from .read import DBReaderStaking
 from ..oxen.rpc import OxenRPC
 from ..registration.read import DBReaderRegistrations
@@ -132,7 +133,8 @@ def create_app(config: StakingAppConfig) -> App:
 
     def get_network_info_uncached() -> tuple[dict | None, ArbitrumInfo]:
         network_info = app.db_reader.get_network_info()
-        arbitrum_info = app.db_reader.get_arbitrum_info()
+        # arbitrum_info = app.db_reader.get_arbitrum_info()
+        arbitrum_info = ArbitrumInfo(0, 0, 0, 0)
         if network_info is None:
             return None, arbitrum_info
         network_info = dataclasses.asdict(network_info)
@@ -149,27 +151,15 @@ def create_app(config: StakingAppConfig) -> App:
     def get_arbitrum_events_cached():
         return app.cache.get("arbitrum_events_all", getter=app.get_arbitrum_events, ttl=1)
 
-    def get_contribution_contract_contributor_map_uncached():
-        _, contribution_contract_events = get_arbitrum_events_cached()
-        contracts = app.db_reader.get_contribution_contracts()
-        for address, events in contribution_contract_events.items():
-            contracts[address].events.extend(events)
-            for contributor in contracts[address].contributors:
-                app.contribution_contract_map.setdefault(contributor.address, [])
-                app.contribution_contract_map[contributor.address].append(contracts[address])
-        return app.contribution_contract_map
-
-    def get_contribution_contract_map_cached():
-        return app.cache.get("contribution_contracts", getter=get_contribution_contract_contributor_map_uncached, ttl=1)
 
     def get_contribution_contracts_for_address_uncached(address: str):
-        return get_contribution_contract_map_cached().get(address, [])
+        return []
 
     def get_contribution_contracts_for_address_cached(address: str):
-        return app.cache.get(f"contribution_contracts-{address}", getter=get_contribution_contracts_for_address_uncached, getter_args=address, ttl=1)
+        return app.cache.get(f"contribution_contracts-{address}", getter=get_related_contribution_contracts_for_eth_address_uncached, getter_args=address, ttl=1)
 
     def get_vesting_contracts_cached():
-        return app.cache.get("vesting_contracts", getter=app.db_reader.get_vesting_contracts, ttl=120)
+        return app.cache.get("vesting_contracts", getter=app.db_reader.get_vesting_contracts, ttl=4)
 
     def get_vesting_contracts_for_beneficiary_cached(beneficiary: str):
         contracts = []
@@ -314,31 +304,42 @@ def create_app(config: StakingAppConfig) -> App:
                                         ttl=config.stale_time_seconds_contract_abis)}
         )
 
+
+    def get_contribution_contracts_uncached():
+        contracts = app.db_reader.get_contribution_contracts()
+        addresses = contracts.keys()
+        contract_events = app.db_reader.get_arbitrum_events_by_main_args(addresses)
+        for event in contract_events:
+            contracts[event.main_arg].events.append(event)
+        return contracts
+
+
     def get_contribution_contracts_cached():
-        return app.cache.get("contracts", getter=app.db_reader.get_contribution_contracts, ttl=2)
+        return app.cache.get("contracts", getter=get_contribution_contracts_uncached, ttl=2)
 
     @app.route("/contract/contribution")
     def get_open_contract_details():
         return json_res(
-            {"contracts": get_contribution_contracts_cached(), "added_bls_keys": get_nodes_bls_keys_cached()}
+            {"contracts": list(get_contribution_contracts_cached().values()), "added_bls_keys": get_nodes_bls_keys_cached()}
         )
 
     def get_contribution_contracts_for_sn_pubkey_uncached(sn_pubkey: bytes):
-        cached_contracts = app.db_reader.get_contribution_contracts()
+        cached_contracts = get_contribution_contracts_cached().values()
         contracts = [contract for contract in cached_contracts if contract.service_node_pubkey == sn_pubkey]
-        return contracts
+        contracts.sort(key=lambda x: x.events[-1].block if len(x.events) > 0 else math.inf, reverse=True)
+        return contracts[0] if len(contracts) > 0 else None
 
     @app.route("/contract/contribution/<hex64:sn_pubkey>")
     def get_contribution_contract_for_sn_pubkey_cached(sn_pubkey: bytes):
         key = sn_pubkey.hex()
         return json_res(
-            {"contracts": app.cache.get("contract-sn-{}".format(key),
+            {"contract": app.cache.get("contract-sn-{}".format(key),
                                         getter=get_contribution_contracts_for_sn_pubkey_uncached, getter_args=key,
                                         ttl=2)}
         )
 
     def get_related_contribution_contracts_for_eth_address_uncached(eth_wal: str):
-        contracts = get_contribution_contracts_cached()
+        contracts = get_contribution_contracts_cached().values()
 
         related_contracts = []
         for contract in contracts:
@@ -527,17 +528,16 @@ def create_app(config: StakingAppConfig) -> App:
     def get_rewards_info_for_address_cached(eth_wal: str):
         address = eth_format(eth_wal)
         rewards_info = get_rewards_info_cached()
-        return rewards_info.get(address, 0)
+        return rewards_info.get(address, RewardsInfo(address=address, amount=0, lifetime_liquidated_stakes=0,
+                                                     lifetime_locked_stakes=0, lifetime_rewards=0,
+                                                     lifetime_unlocked_stakes=0, locked_stakes=0,
+                                                     timelocked_stakes=0))
 
     def get_rewards_info_response(eth_wal: str):
         return json_res({"rewards": get_rewards_info_for_address_cached(eth_wal)})
 
     def get_rewards_signature_response(eth_wal: str):
         try:
-            rewards = get_rewards_info_for_address_cached(eth_wal)
-            if rewards == 0:
-                return flask.abort(404, f"No rewards available for {eth_wal}")
-
             return json_res(
                 {"rewards": app.cache.get(f"rewards-sig-{eth_wal}", getter=get_rewards_signature_uncached,
                                           getter_args=eth_wal,

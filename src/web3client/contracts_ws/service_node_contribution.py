@@ -19,7 +19,7 @@ from src.web3client.event_queue_manager import EventQueueManager
 class ContributionContractContributor:
     address: str = None
     amount: int = 0
-    beneficiary_address: str = None
+    beneficiary: str = None
     reserved: int = 0
 
 
@@ -62,13 +62,14 @@ class ContributionContract:
         service_node_pubkey = parse_ed25519_pubkey(new_ed25519_pubkey)
         self.db_writer.write_update_contribution_contract_pubkeys(self.address, pubkey_bls, service_node_pubkey)
 
-    def _upsert_contributor(self, address: str):
-        self._contributors.setdefault(address, ContributionContractContributor(address))
+    def _upsert_contributor(self, address: str, beneficiary: str | None):
+        self._contributors.setdefault(address, ContributionContractContributor(address=address, beneficiary=beneficiary))
 
-    def update_contributor_new_contribution(self, address: str, amount: int):
-        self.log.debug(f"Updating contributor add {address} with amount {amount}")
-        self._upsert_contributor(address)
+    def update_contributor_new_contribution(self, address: str, beneficiary: str, amount: int):
+        self.log.debug(f"Updating contributor add {address} with beneficiary {beneficiary} and amount {amount}")
+        self._upsert_contributor(address, beneficiary)
         self._contributors[address].address = address
+        self._contributors[address].beneficiary = beneficiary
         self._contributors[address].amount += amount
         self.db_writer.write_update_contribution_contract_contributor(self.address, self._contributors[address])
 
@@ -84,10 +85,10 @@ class ContributionContract:
         else:
             self.log.warning(f"No contributor found for address {address} to withdraw {amount}")
 
-    def update_contributor_beneficiary(self, address: str, beneficiary_address: str):
-        self.log.debug(f"Updating contributor beneficiary {address} to {beneficiary_address}")
-        self._upsert_contributor(address)
-        self._contributors[address].beneficiary_address = beneficiary_address
+    def update_contributor_beneficiary(self, address: str, beneficiary: str):
+        self.log.debug(f"Updating contributor beneficiary {address} to {beneficiary}")
+        self._upsert_contributor(address, beneficiary)
+        self._contributors[address].beneficiary = beneficiary
         self.db_writer.write_update_contribution_contract_contributor(self.address, self._contributors[address])
 
     def update_reserved_contributors(self, reserved_contributors: list[dict[str, str]]):
@@ -95,7 +96,7 @@ class ContributionContract:
         for reserved_contributor in reserved_contributors:
             address = reserved_contributor.get("addr")
             reserved_amount = reserved_contributor.get("amount")
-            self._upsert_contributor(address)
+            self._upsert_contributor(address, None)
             self._contributors[address].reserved = reserved_amount
             self.db_writer.write_update_contribution_contract_contributor(self.address, self._contributors[address])
 
@@ -119,7 +120,7 @@ class ContributionContract:
                 return self.update_status(3)
 
             case "NewContribution":
-                return self.update_contributor_new_contribution(event.args.get("contributor"), event.args.get("amount"))
+                return self.update_contributor_new_contribution(event.args.get("contributor"), event.args.get("beneficiary"), event.args.get("amount"))
 
             case "WithdrawContribution":
                 return self.update_contributor_withdraw_contribution(event.args.get("contributor"),

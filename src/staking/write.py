@@ -4,7 +4,8 @@ from contextlib import closing
 
 from web3 import Web3
 
-from ..db.write import DBWriter
+from ..db.util import sql_connect_in_write_mode
+from ..log import Log
 from ..staking.arbitrum import ContributionContractDetails
 from ..staking.dataclasses import RewardsInfo, DBNodeExit, VestingContract
 from ..oxen.rpc import ServiceNode, NetworkInfo
@@ -12,9 +13,10 @@ from ..web3client.abi_manager import ABIData
 from ..web3client.event_scanner import ProcessedEvent
 
 
-class DBWriterStaking(DBWriter):
+class DBWriterStaking:
     def __init__(self, db_path: str, log_level: int, perf: bool = False):
-        super().__init__(db_path, log_level, perf)
+        self.log = Log("db_writer", log_level, enable_perf=perf).logger
+        self.db_path = db_path
         self.defer_writing_arbitrum_events = False
         self.deferred_arbitrum_events = []
 
@@ -27,7 +29,7 @@ class DBWriterStaking(DBWriter):
     ):
         self.log.perf.start("write_to_db")
 
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Inserting {} service nodes".format(len(parsed_nodes)))
@@ -160,7 +162,7 @@ class DBWriterStaking(DBWriter):
         those nodes from the staging db.
         """
         self.log.perf.start("write_nodes_to_main_db")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.perf.start("write_nodes_to_main_db -> select nodes")
@@ -319,7 +321,7 @@ class DBWriterStaking(DBWriter):
 
     def write_exit_list_to_db(self, exit_list: list[DBNodeExit]):
         self.log.perf.start("write_exit_list_to_db")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Updating nodes in main with {} exit events".format(len(exit_list)))
@@ -356,10 +358,11 @@ class DBWriterStaking(DBWriter):
             self,
             network: NetworkInfo,
             node_count: int,
+            total_staked: int,
             active_node_count: int,
     ):
         self.log.perf.start("write_network_info_to_db")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -378,9 +381,10 @@ class DBWriterStaking(DBWriter):
                         nettype,
                         pulse_target_timestamp,
                         staking_requirement,
+                        total_staked,
                         version
                         )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         1,
@@ -397,6 +401,7 @@ class DBWriterStaking(DBWriter):
                         network.nettype,
                         network.pulse_target_timestamp,
                         network.staking_requirement,
+                        total_staked,
                         network.version,
                     ),
                 )
@@ -405,7 +410,7 @@ class DBWriterStaking(DBWriter):
 
     def write_rewards_info_to_db(self, rewards_info: list[RewardsInfo]):
         self.log.perf.start("write_rewards_info_to_db")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Inserting {} rewards info".format(len(rewards_info)))
@@ -413,13 +418,36 @@ class DBWriterStaking(DBWriter):
 
                 cursor.executemany(
                     """
-                    INSERT OR REPLACE INTO rewards_info (address, rewards)
-                    VALUES (?, ?)
+                    INSERT INTO rewards_info (
+                        address,
+                        amount,
+                        lifetime_liquidated_stakes,
+                        lifetime_locked_stakes,
+                        lifetime_rewards,
+                        lifetime_unlocked_stakes,
+                        locked_stakes,
+                        timelocked_stakes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(address) DO UPDATE SET
+                        amount = excluded.amount,
+                        lifetime_liquidated_stakes = excluded.lifetime_liquidated_stakes,
+                        lifetime_locked_stakes = excluded.lifetime_locked_stakes,
+                        lifetime_rewards = excluded.lifetime_rewards,
+                        lifetime_unlocked_stakes = excluded.lifetime_unlocked_stakes,
+                        locked_stakes = excluded.locked_stakes,
+                        timelocked_stakes = excluded.timelocked_stakes;
                     """,
                     (
                         (
                             info.address,
-                            info.rewards,
+                            info.amount,
+                            info.lifetime_liquidated_stakes,
+                            info.lifetime_locked_stakes,
+                            info.lifetime_rewards,
+                            info.lifetime_unlocked_stakes,
+                            info.locked_stakes,
+                            info.timelocked_stakes
                         )
                         for info in rewards_info
                     ),
@@ -435,13 +463,54 @@ class DBWriterStaking(DBWriter):
             connection.commit()
             self.log.perf.end("write_rewards_info_to_db")
 
+    def write_update_rewards_claim_amounts(self, address: str, claimed_stakes: int, claimed_rewards: int):
+        self.log.perf.start("write_update_rewards_claim_amounts")
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(f"Updating rewards claim amounts for {address}")
+                self.log.perf.start("write_update_rewards_claim_amounts -> update rewards claim amounts")
+                cursor.execute(
+                    """
+                    UPDATE rewards_info SET claimed_stakes = ?, claimed_rewards = ? WHERE address = ?
+                    """,
+                    (claimed_stakes, claimed_rewards, address),
+                )
+                updated_rows = cursor.rowcount
+                self.log.perf.end("write_update_rewards_claim_amounts -> update rewards claim amounts")
+                self.log.debug(
+                    "Updated {} rows in rewards_info".format(updated_rows)
+                )
+            connection.commit()
+            self.log.perf.end("write_update_rewards_claim_amounts")
+
+    def write_reset_all_rewards_claim_amounts(self):
+        self.log.perf.start("write_reset_all_rewards_claim_amounts")
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug("Updating rewards claim amounts for all addresses")
+                self.log.perf.start("write_reset_all_rewards_claim_amounts -> update rewards claim amounts")
+                cursor.execute(
+                    """
+                    UPDATE rewards_info SET claimed_stakes = 0, claimed_rewards = 0
+                    """
+                )
+                updated_rows = cursor.rowcount
+                self.log.perf.end("write_reset_all_rewards_claim_amounts -> update rewards claim amounts")
+                self.log.debug(
+                    "Updated {} rows in rewards_info".format(updated_rows)
+                )
+            connection.commit()
+            self.log.perf.end("write_reset_all_rewards_claim_amounts")
+
     def write_arbitrum_event_to_db(self, event: ProcessedEvent):
         if self.defer_writing_arbitrum_events:
             self.log.debug(f"Deferring arbitrum event write: {event}")
             self.deferred_arbitrum_events.append(event)
             return
         self.log.perf.start("write_arbitrum_event_to_db")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Inserting event into arbitrum_events")
@@ -482,6 +551,7 @@ class DBWriterStaking(DBWriter):
             return
 
         events, self.deferred_arbitrum_events = self.deferred_arbitrum_events, []
+        events.sort(key=lambda x: (x.block, x.log_index))
 
         try:
             self.log.info(f"Writing {len(events)} deferred arbitrum events to db")
@@ -494,7 +564,7 @@ class DBWriterStaking(DBWriter):
     def write_arbitrum_events_to_db(self, events: list[ProcessedEvent]):
         self.log.perf.start("write_arbitrum_events_to_db")
 
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Inserting {} events into arbitrum_events".format(len(events)))
@@ -537,26 +607,27 @@ class DBWriterStaking(DBWriter):
             connection.commit()
             self.log.perf.end("write_arbitrum_events_to_db")
 
-    def write_new_contribution_contract(self, address: str, operator_address: str):
+    def write_new_contribution_contract(self, address: str, operator_address: str, service_node_pubkey: str):
         self.log.perf.start("write_new_contribution_contract")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug(f"Inserting new contribution contract")
                 cursor.execute("""
                 INSERT OR REPLACE INTO contribution_contracts (
                     address,
-                    operator_address
+                    operator_address,
+                    service_node_pubkey
                 )
-                VALUES (?, ?)
-                """, (address, operator_address))
+                VALUES (?, ?, ?)
+                """, (address, operator_address, service_node_pubkey))
 
                 connection.commit()
                 self.log.perf.end("write_new_contribution_contract")
 
     def write_update_contribution_contract_status(self, address: str, status: int):
         self.log.perf.start("write_update_contribution_contract_status")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug(f"Updating contribution contract status to {status}")
@@ -572,7 +643,7 @@ class DBWriterStaking(DBWriter):
 
     def write_update_contribution_contract_manual_finalize(self, address: str, manual_finalize: bool):
         self.log.perf.start("write_update_contribution_contract_manual_finalize")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug(f"Updating contribution contract manual_finalize to {manual_finalize}")
@@ -588,7 +659,7 @@ class DBWriterStaking(DBWriter):
 
     def write_update_contribution_contract_fee(self, address: str, fee: int):
         self.log.perf.start("write_update_contribution_contract_fee")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug(f"Updating contribution contract fee to {fee}")
@@ -604,15 +675,19 @@ class DBWriterStaking(DBWriter):
 
     def write_update_contribution_contract_pubkeys(self, address: str, pubkey_bls: str, service_node_pubkey: str):
         self.log.perf.start("write_update_contribution_contract_pubkeys")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug(f"Updating contribution contract pubkeys")
                 cursor.execute(
                     """
-                    INSERT OR UPDATE contribution_contracts SET pubkey_bls = ?, service_node_pubkey = ? WHERE address = ?
+                    INSERT INTO contribution_contracts (address, pubkey_bls, service_node_pubkey)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(address) DO UPDATE SET
+                        pubkey_bls = excluded.pubkey_bls,
+                        service_node_pubkey = excluded.service_node_pubkey;
                     """,
-                    (pubkey_bls, service_node_pubkey, address),
+                    (address, pubkey_bls, service_node_pubkey),
                 )
 
                 connection.commit()
@@ -620,7 +695,7 @@ class DBWriterStaking(DBWriter):
 
     def write_update_contribution_contract_contributor(self, contract_address: str, contributor):
         self.log.perf.start("write_update_contribution_contract_contributor")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug(f"Updating contribution contract contributor")
@@ -638,7 +713,7 @@ class DBWriterStaking(DBWriter):
                     (
                         contributor.address,
                         contributor.amount,
-                        contributor.beneficiary_address,
+                        contributor.beneficiary,
                         contract_address,
                         contributor.reserved
                     ),
@@ -646,9 +721,9 @@ class DBWriterStaking(DBWriter):
 
                 connection.commit()
 
-    def write_delete_contribution_contract_contributor(self, contract_address: str, contributor):
+    def write_delete_contribution_contract_contributor(self, contract_address: str, contributor_address: str):
         self.log.perf.start("write_delete_contribution_contract_contributor")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug(f"Deleting contribution contract contributor")
@@ -656,18 +731,33 @@ class DBWriterStaking(DBWriter):
                     """
                     DELETE FROM contribution_contracts_contributions WHERE address = ? AND contract_address = ?
                     """,
-                    (contributor.address, contract_address),
+                    (contributor_address, contract_address),
                 )
 
                 connection.commit()
                 self.log.perf.end("write_delete_contribution_contract_contributor")
+
+    def write_delete_all_contribution_contract_contributors(self, contract_address: str):
+        self.log.perf.start("write_delete_all_contribution_contract_contributors")
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug(f"Deleting all contribution contract contributors")
+                cursor.execute(
+                    """
+                    DELETE FROM contribution_contracts_contributions WHERE contract_address = ?
+                    """,
+                    (contract_address,),
+                )
+                connection.commit()
+                self.log.perf.end("write_delete_all_contribution_contract_contributors")
 
     def write_contribution_contracts_to_db(
             self, contracts: list[ContributionContractDetails], contributions_list: list
     ):
         self.log.perf.start("write_contribution_contracts_to_db")
 
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Inserting {} contribution contracts".format(len(contracts)))
@@ -776,7 +866,7 @@ class DBWriterStaking(DBWriter):
 
     def write_smart_contract_abis_to_db(self, abis: list[ABIData]):
         self.log.perf.start("write_smart_contract_abis_to_db")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Inserting {} smart contract abis".format(len(abis)))
@@ -818,7 +908,7 @@ class DBWriterStaking(DBWriter):
             contracts,
     ):
         self.log.perf.start("write_smart_contract_details_to_db")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Inserting {} smart contract details".format(len(contracts)))
@@ -853,7 +943,7 @@ class DBWriterStaking(DBWriter):
 
     def write_arbitrum_info_to_db(self, current_block, service_node_rewards_balance, reward_rate_pool_balance):
         self.log.perf.start("write_arbitrum_info_to_db")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug(
@@ -877,7 +967,7 @@ class DBWriterStaking(DBWriter):
 
     def write_vesting_contracts(self, vesting_contracts: list[VestingContract]):
         self.log.perf.start("write_vesting_contracts")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Inserting {} vesting contracts".format(len(vesting_contracts)))
@@ -928,7 +1018,7 @@ class DBWriterStaking(DBWriter):
 
     def delete_all_vesting_contracts(self):
         self.log.perf.start("delete_all_vesting_contracts")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 cursor.execute("DELETE FROM vesting_contracts")
@@ -941,7 +1031,7 @@ class DBWriterStaking(DBWriter):
 
     def write_update_vesting_contract_beneficiary(self, address: str, beneficiary: str):
         self.log.perf.start("write_update_vesting_contract_beneficiary")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Updating vesting contract {} beneficiary to {}".format(address, beneficiary))
@@ -966,7 +1056,7 @@ class DBWriterStaking(DBWriter):
 
     def delete_all_events(self):
         self.log.perf.start("delete_all_events")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 self.log.debug("Deleting all events from the db")
@@ -984,7 +1074,7 @@ class DBWriterStaking(DBWriter):
 
     def delete_all_contrib_contracts_and_contributors(self):
         self.log.perf.start("delete_all_contrib_contracts_and_contributors")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
             connection.execute("BEGIN")
             with closing(connection.cursor()) as cursor:
                 cursor.execute("""Delete from contribution_contracts_contributions""")

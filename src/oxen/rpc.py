@@ -97,7 +97,7 @@ class OxenRPC:
             eth_address_for_rpc = eth_address_for_rpc[2:]
         result = self.FutureJSON(
             "rpc.bls_rewards_request",
-            args={"address": eth_address_for_rpc},
+            args={"address": eth_address_for_rpc, "height": 0},
             timeout=30,
         )
         return result
@@ -123,6 +123,17 @@ class OxenRPC:
         return self.FutureJSON(
             "rpc.get_last_block_header",
             args={"fill_pow_hash": False, "get_tx_hashes": False},
+        )
+
+    def get_block_headers_range(self, start_height, end_height):
+        return self.FutureJSON(
+            "rpc.get_block_headers_range",
+            args={
+                "start_height": start_height,
+                "end_height": end_height,
+                "get_tx_hashes": False,
+                "fill_pow_hash": False,
+            },
         )
 
     def get_service_nodes(self) -> FutureJSON:

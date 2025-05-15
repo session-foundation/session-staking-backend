@@ -59,24 +59,36 @@ class EventQueueManager:
             responses = []
             for past_event in queue:
                 from_block = past_event.start_block if past_event.start_block else start_block
-                self.log.debug(
+                self.log.info(
                     f"Fetching past events for {past_event.event.event_name} from block {from_block} to block {block_current} ({block_current - from_block} blocks ~{get_relative_time_from_ms(get_time_of_arbitrum_blocks_ms(block_current - from_block))})")
                 for recent in await past_event.event.get_logs(from_block=from_block, to_block=block_current):
-                    responses.append(past_event.handler(recent))
+                    responses.append((recent, past_event.handler))
                 self.processed_events += 1
 
-            await asyncio.gather(*responses)
+            # sort responses by block then log index
+            responses = sorted(responses, key=lambda x: (x[0].get("blockNumber"), x[0].get("logIndex")))
+
+            handlers = []
+            for (data, handler) in responses:
+                handlers.append(handler(data))
+
+            await asyncio.gather(*handlers)
 
         else:
             self.log.debug("No past events to fetch")
 
+        return block_current
+
     async def process_sub_queue(self):
         sub_queue, self.sub_queue = self.sub_queue, []
+        return
 
         if len(sub_queue) > 0:
             await self.w3.subscription_manager.subscribe(sub_queue)
             self.processed_subs += len(sub_queue)
             self.log.info(f"Subscribed to {len(sub_queue)} subscriptions")
+            for sub in sub_queue:
+                self.log.info(f"Subscribed to {sub.label} for topics {sub.topics}")
         else:
             self.log.debug("No subscriptions to subscribe to")
 
@@ -84,9 +96,10 @@ class EventQueueManager:
         # The max depth ensures the loop won't get stuck in an infinite loop. This is just a safety measure as it should
         # not be possible due to the queue population dependencies.
         run_depth = 0
+        last_scanned_block = 0
         while run_depth <= self.max_run_depth and (len(self.sub_queue) > 0 or len(self.event_queue) > 0):
             await self.process_sub_queue()
-            await self.process_event_queue()
+            last_scanned_block = await self.process_event_queue()
             run_depth += 1
 
         logging.debug(
@@ -95,3 +108,5 @@ class EventQueueManager:
         if run_depth > self.max_run_depth:
             self.log.warning(
                 f"Reached max run depth of {self.max_run_depth}. This may indicate a problem with the event scanner. Events may have been missed.")
+
+        return last_scanned_block

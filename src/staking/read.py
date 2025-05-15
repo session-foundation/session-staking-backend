@@ -3,18 +3,21 @@ from contextlib import closing
 
 from ..db.read import DBReader
 from .dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
-    DBContributionContractContribution, SmartContractABI, ArbitrumInfo, VestingContract
+    DBContributionContractContribution, SmartContractABI, ArbitrumInfo, VestingContract, RewardsInfo
+from ..db.util import sql_connect_in_read_mode
+from ..log import Log
 from ..util.parse import eth_format
 from ..web3client.event_scanner import ProcessedEvent
 
 
-class DBReaderStaking(DBReader):
-    def __init__(self, db_path: str, log_level: int, perf: bool = False, disable_db_file_rewrite: bool = False):
-        super().__init__(db_path, log_level, perf, disable_db_file_rewrite)
+class DBReaderStaking:
+    def __init__(self, db_path: str, log_level: int, perf: bool = False):
+        self.log = Log("db_reader", log_level, enable_perf=perf).logger
+        self.db_path = db_path
 
     def get_last_fetched_network_block_height(self) -> int:
         self.log.perf.start("get_last_fetched_network_block_height")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT MAX(fetched_block_height) FROM service_nodes_staging")
                 (fetched_block_height,) = cursor.fetchone()
@@ -26,7 +29,7 @@ class DBReaderStaking(DBReader):
 
     def get_last_commited_network_block_height(self) -> int:
         self.log.perf.start("get_last_commited_network_block_height")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT MAX(fetched_block_height) FROM service_nodes_main")
                 (commited_block_height,) = cursor.fetchone()
@@ -40,7 +43,7 @@ class DBReaderStaking(DBReader):
 
     def get_network_info(self):
         self.log.perf.start("get_network_info")
-        with closing(sqlite3.connect(self.db_path, uri=True)) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT * FROM network_info LIMIT 1")
                 network_info = DBNetworkInfo(*cursor.fetchone())
@@ -51,7 +54,7 @@ class DBReaderStaking(DBReader):
 
     def get_last_fetched_arbitrum_event_block_height(self) -> int:
         self.log.perf.start("get_last_fetched_arbitrum_event_block_height")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT MAX(block) FROM arbitrum_events")
                 (fetched_block_height,) = cursor.fetchone()
@@ -65,7 +68,7 @@ class DBReaderStaking(DBReader):
 
     def get_contribution_contract_contributors(self, address:str):
         self.log.perf.start("get_contribution_contract_contributors")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("""SELECT * FROM contribution_contracts_contributions WHERE contract_address = ?""", (address,))
                 contributors = [DBContributionContractContribution(*contribution) for contribution in cursor.fetchall()]
@@ -75,7 +78,7 @@ class DBReaderStaking(DBReader):
 
     def get_contribution_contracts(self):
         self.log.perf.start("get_contribution_contracts")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("""SELECT * FROM contribution_contracts""")
                 contracts = cursor.fetchall()
@@ -101,9 +104,38 @@ class DBReaderStaking(DBReader):
                 self.log.perf.end("get_contribution_contracts")
                 return parsed_contracts
 
+    def get_contribution_contracts_non_finalized(self):
+        self.log.perf.start("get_contribution_contracts")
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute("""SELECT * FROM contribution_contracts""")
+                contracts = cursor.fetchall()
+
+                parsed_contracts = {}
+                for contract in contracts:
+                    contract_dict = DBContributionContract(*contract, contributors=[], events=[])
+                    parsed_contracts[contract_dict.address] = contract_dict
+
+                cursor.execute(
+                    """
+                    SELECT * FROM contribution_contracts_contributions where status < 3
+                    """
+                )
+                contributions = cursor.fetchall()
+                for contribution in contributions:
+                    contribution_dict = DBContributionContractContribution(*contribution)
+                    parsed_contracts[contribution_dict.contract_address].contributors.append(
+                        contribution_dict
+                    )
+
+                self.log.debug("Parsed contribution contracts: {}".format(len(parsed_contracts)))
+                self.log.perf.end("get_contribution_contracts")
+                return parsed_contracts
+
+
     def get_contribution_contract_addresses(self):
         self.log.perf.start("get_contribution_contracts")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -117,7 +149,7 @@ class DBReaderStaking(DBReader):
 
     def get_nodes(self):
         self.log.perf.start("get_nodes")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 parsed_nodes = {}
 
@@ -189,7 +221,7 @@ class DBReaderStaking(DBReader):
 
     def get_contribution_addresses(self):
         self.log.perf.start("get_contribution_addresses")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 addresses = set()
                 cursor.execute("""SELECT address, beneficiary from service_nodes_contributions_main""")
@@ -206,20 +238,28 @@ class DBReaderStaking(DBReader):
 
     def get_rewards_info(self):
         self.log.perf.start("get_rewards_info")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT * FROM rewards_info")
-                rewards_info = {
-                    eth_format(address_hex): rewards
-                    for address_hex, rewards in cursor.fetchall()
-                }
+                rewards = [RewardsInfo(*info) for info in cursor.fetchall()]
+                rewards_info = {info.address: info for info in rewards}
                 self.log.debug("Rewards info: {}".format(len(rewards_info)))
                 self.log.perf.end("get_rewards_info")
                 return rewards_info
 
+    def get_rewards_info_for_address(self, address: str):
+        self.log.perf.start("get_rewards_info_for_address")
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute("SELECT * FROM rewards_info WHERE address = ?", (address,))
+                info = RewardsInfo(*cursor.fetchone())
+                self.log.debug("Rewards info: {}".format(info))
+                self.log.perf.end("get_rewards_info_for_address")
+                return info
+
     def get_smart_contract_abis(self):
         self.log.perf.start("get_smart_contract_abis")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -233,7 +273,7 @@ class DBReaderStaking(DBReader):
 
     def get_smart_contract_abi(self, name: str):
         self.log.perf.start("get_smart_contract_abi")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -248,7 +288,7 @@ class DBReaderStaking(DBReader):
 
     def get_smart_contract_names(self) -> list[str]:
         self.log.perf.start("get_smart_contract_names")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -262,7 +302,7 @@ class DBReaderStaking(DBReader):
 
     def get_smart_contract_addresses(self):
         self.log.perf.start("get_smart_contract_addresses")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -278,7 +318,7 @@ class DBReaderStaking(DBReader):
 
     def get_smart_contract_addresses_core(self):
         self.log.perf.start("get_smart_contract_addresses_core")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -294,7 +334,7 @@ class DBReaderStaking(DBReader):
 
     def get_smart_contract_address(self, name: str):
         self.log.perf.start("get_smart_contract_address")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -310,7 +350,7 @@ class DBReaderStaking(DBReader):
     def get_arbitrum_events(self, from_block = 0, names: list = None):
         self.log.perf.start("get_arbitrum_events")
         assert from_block >= 0, "from_block must be >= 0"
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 self.log.debug(f"Getting events from block {from_block} with names {names}")
                 if names is None:
@@ -334,7 +374,7 @@ class DBReaderStaking(DBReader):
     def get_arbitrum_events_by_name(self, name: str, from_block = 0):
         self.log.perf.start("get_arbitrum_events_by_name")
         assert from_block >= 0, "from_block must be >= 0"
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -347,10 +387,26 @@ class DBReaderStaking(DBReader):
                 self.log.perf.end("get_arbitrum_events_by_name")
                 return events
 
+    def get_arbitrum_events_by_main_args(self, main_args: list[str]):
+        self.log.perf.start("get_arbitrum_events_by_main_arg")
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM arbitrum_events WHERE main_arg IN ({})
+                    """.format(",".join(["?"] * len(main_args))),
+                    (tuple(main_args)),
+                )
+                events = [ProcessedEvent(*event) for event in cursor.fetchall()]
+                self.log.debug("Arbitrum events: {}".format(len(events)))
+                self.log.perf.end("get_arbitrum_events_by_main_arg")
+                return events
+
+
     def get_arbitrum_event_main_args_by_name(self, name: str, from_block = 0):
         self.log.perf.start("get_arbitrum_event_main_args_by_name")
         assert from_block >= 0, "from_block must be >= 0"
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -369,7 +425,7 @@ class DBReaderStaking(DBReader):
         if args is None:
             args = [1000, 0]
         self.log.perf.start("get_arbitrum_events")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 limit = args[0] if len(args) > 0 else 1000
                 skip = args[1] if len(args) > 1 else 0
@@ -391,7 +447,7 @@ class DBReaderStaking(DBReader):
 
     def get_arbitrum_info(self):
         self.log.perf.start("get_arbitrum_info")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT * FROM arbitrum_info ORDER BY block DESC LIMIT 1")
                 info = ArbitrumInfo(*cursor.fetchone())
@@ -402,7 +458,7 @@ class DBReaderStaking(DBReader):
 
     def get_arbitrum_events_for_stake_contrat_id(self, contract_id: int):
         self.log.perf.start("get_events_for_stake_contrat_id")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -417,7 +473,7 @@ class DBReaderStaking(DBReader):
 
     def get_vesting_contracts(self) -> list[VestingContract]:
         self.log.perf.start("get_vesting_contracts")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
@@ -431,7 +487,7 @@ class DBReaderStaking(DBReader):
 
     def has_vesting_contracts(self) -> bool:
         self.log.perf.start("has_vesting_contracts")
-        with closing(self.connect()) as connection:
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """

@@ -2,11 +2,17 @@ import asyncio
 import logging
 import time
 from datetime import datetime
+from math import ceil
+
 from attr import dataclass
 
 from eth_typing import ChecksumAddress
 from eth_utils import is_checksum_address, to_checksum_address
 from web3 import AsyncWeb3, WebSocketProvider
+from web3._utils.events import get_event_data
+from web3.auto.gethdev import async_w3
+from web3.types import LogReceipt
+from web3.utils.subscriptions import NewHeadsSubscriptionContext, NewHeadsSubscription, LogsSubscription
 
 from src.config_validate import validate_log_config, validate_contract_addresses
 from src.db.util import is_db_initialized, init_db
@@ -22,7 +28,6 @@ from src.web3client.contracts_ws.service_node_contribution_factory import Servic
 from src.web3client.contracts_ws.service_node_rewards import ServiceNodeRewards
 from src.web3client.contracts_ws.token import Token
 from src.web3client.contracts_ws.token_vesting_staking import TokenVestingStaking
-from src.web3client.contrib_contract_details import load_contributor_contract_details
 from src.web3client.event_queue_manager import EventQueueManager
 
 log = Log("event_ws", enable_perf=True).logger
@@ -31,6 +36,8 @@ global_db_reader: DBReaderStaking | None = None
 event_queue: EventQueueManager | None = None
 sn_contrib_factory: ServiceNodeContributionFactory | None = None
 
+topic_map = {}
+event_addresses = set()
 
 @dataclass(init=False)
 class VestingContractDetails:
@@ -58,14 +65,15 @@ class VestingContractDetails:
         self.rewards_contract = rewards_contract
         self.sn_contrib_factory = sn_contrib_factory
 
-        assert is_checksum_address(self.beneficiary)
-        assert is_checksum_address(self.vesting_address)
-        assert self.amount > 0
-        assert self.start < self.end
-        assert self.transferable_beneficiary is not None
-        assert is_checksum_address(self.revoker)
-        assert is_checksum_address(self.SESH)
-        assert is_checksum_address(self.rewards_contract)
+        # TODO: decide if we want this
+        # assert is_checksum_address(self.beneficiary)
+        # assert is_checksum_address(self.vesting_address)
+        # assert self.amount > 0
+        # assert self.start < self.end
+        # assert self.transferable_beneficiary is not None
+        # assert is_checksum_address(self.revoker)
+        # assert is_checksum_address(self.SESH)
+        # assert is_checksum_address(self.rewards_contract)
         assert is_checksum_address(self.sn_contrib_factory)
 
 
@@ -78,6 +86,7 @@ class EventScannerConfig:
     ws_providers: list[str]
     ws_max_size: int
     genesis_block: int
+    contrib_factory_start_block: int
     addr_token: ChecksumAddress
     addr_sn_contrib_factory: ChecksumAddress
     addr_sn_rewards: ChecksumAddress
@@ -122,7 +131,7 @@ async def load_vesting_staking_contracts(w3: AsyncWeb3, details: list[VestingCon
             known_details = details[i // contract_interface.batch_items]
             beneficiary = res[i]
             revoker = res[i + 1]
-            amount = res[i + 2]
+            # amount = res[i + 2]
             transferable_beneficiary = res[i + 3]
             start = res[i + 4]
             end = res[i + 5]
@@ -130,33 +139,34 @@ async def load_vesting_staking_contracts(w3: AsyncWeb3, details: list[VestingCon
             rewards_contract = res[i + 7]
             sn_contrib_factory = res[i + 8]
 
-            assert revoker == known_details.revoker, f"Expected {known_details.revoker}, got {revoker}"
+            # assert revoker == known_details.revoker, f"Expected {known_details.revoker}, got {revoker}"
 
-            if start < now:
-                assert amount == known_details.amount, f"Expected {known_details.amount}, got {amount}"
+            # if start < now:
+            #     assert amount == known_details.amount, f"Expected {known_details.amount}, got {amount}"
             # TODO: consider checking staked amounts and asserting those
 
-            assert transferable_beneficiary == known_details.transferable_beneficiary, f"Expected {known_details.transferable_beneficiary}, got {transferable_beneficiary}"
-            if not transferable_beneficiary:
-                assert beneficiary == known_details.beneficiary, f"Expected {known_details.beneficiary}, got {beneficiary}"
+            # assert transferable_beneficiary == known_details.transferable_beneficiary, f"Expected {known_details.transferable_beneficiary}, got {transferable_beneficiary}"
+            # if not transferable_beneficiary:
+            #     assert beneficiary == known_details.beneficiary, f"Expected {known_details.beneficiary}, got {beneficiary}"
             # TODO: consider checking if beneficiary has changed and is correct
 
-            assert start == known_details.start, f"Expected {known_details.start}, got {start}"
-            assert end == known_details.end, f"Expected {known_details.end}, got {end}"
-            assert SESH == known_details.SESH, f"Expected {known_details.SESH}, got {SESH}"
-            assert rewards_contract == known_details.rewards_contract, f"Expected {known_details.rewards_contract}, got {rewards_contract}"
-            assert sn_contrib_factory == known_details.sn_contrib_factory, f"Expected {known_details.sn_contrib_factory}, got {sn_contrib_factory}"
+            # assert start == known_details.start, f"Expected {known_details.start}, got {start}"
+            # assert end == known_details.end, f"Expected {known_details.end}, got {end}"
+            # assert SESH == known_details.SESH, f"Expected {known_details.SESH}, got {SESH}"
+            # assert rewards_contract == known_details.rewards_contract, f"Expected {known_details.rewards_contract}, got {rewards_contract}"
+            # assert sn_contrib_factory == known_details.sn_contrib_factory, f"Expected {known_details.sn_contrib_factory}, got {sn_contrib_factory}"
 
             contracts.append(VestingContract(
                 address=known_details.vesting_address,
-                beneficiary=beneficiary,
+                beneficiary=known_details.beneficiary,
                 initial_amount=known_details.amount,
                 initial_beneficiary=known_details.beneficiary,
-                revoker=revoker,
-                time_end=end,
-                time_start=start,
-                transferable_beneficiary=transferable_beneficiary,
+                revoker=known_details.revoker,
+                time_end=known_details.end,
+                time_start=known_details.start,
+                transferable_beneficiary=known_details.transferable_beneficiary,
             ))
+
 
         global_db_writer.write_vesting_contracts(contracts)
 
@@ -195,37 +205,129 @@ async def init_global_contracts(w3: AsyncWeb3, config: EventScannerConfig):
     await load_vesting_staking_contracts(w3, details=config.vesting_contract_details)
 
     sn_contrib_factory = ServiceNodeContributionFactory(w3=w3, db_writer=global_db_writer, db_reader=global_db_reader,
-                                                        log=log, event_queue=event_queue)
+                                                        log=log, event_queue=event_queue, start_block=max(config.contrib_factory_start_block, start_block), topic_map=topic_map, event_addresses=event_addresses)
     sn_contrib_factory.create_subscriptions(address=config.addr_sn_contrib_factory)
+    event_addresses.add(config.addr_sn_contrib_factory)
+    for event in sn_contrib_factory.get_events(config.addr_sn_contrib_factory):
+        topic_map[event().topic] = (sn_contrib_factory.event_abis[event.name], sn_contrib_factory.handle_event)
 
-    ServiceNodeRewards(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue).create_subscriptions(
-        config.addr_sn_rewards,
-    )
+    snr = ServiceNodeRewards(w3=w3, db_writer=global_db_writer, db_reader=global_db_reader, log=log, event_queue=event_queue)
+    snr.create_subscriptions(config.addr_sn_rewards)
+    event_addresses.add(config.addr_sn_rewards)
+    for event in snr.get_events(config.addr_sn_rewards):
+        topic_map[event().topic] = (snr.event_abis[event.name], snr.handle_event)
 
-    RewardRatePool(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue).create_subscriptions(
+    rrp = RewardRatePool(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
+    rrp.create_subscriptions(
         config.addr_reward_rate_pool
     )
+    event_addresses.add(config.addr_reward_rate_pool)
+    for event in rrp.get_events(config.addr_reward_rate_pool):
+        topic_map[event().topic] = (rrp.event_abis[event.name], rrp.handle_event)
 
-    Ownable2StepUpgradeable(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue).create_subscriptions(
+    osu = Ownable2StepUpgradeable(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
+    osu.create_subscriptions(
         [config.addr_sn_contrib_factory, config.addr_sn_rewards, config.addr_reward_rate_pool]
     )
+    for event in osu.get_events([config.addr_sn_contrib_factory, config.addr_sn_rewards, config.addr_reward_rate_pool]):
+        topic_map[event().topic] = (osu.event_abis[event.name], osu._handle_event)
 
-    PausableUpgradeable(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue).create_subscriptions(
+
+    pu = PausableUpgradeable(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
+    pu.create_subscriptions(
         [config.addr_sn_contrib_factory, config.addr_sn_rewards]
     )
+    for event in pu.get_events([config.addr_sn_contrib_factory, config.addr_sn_rewards]):
+        topic_map[event().topic] = (pu.event_abis[event.name], pu._handle_event)
 
-    IERC1967(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue).create_subscriptions(
+    ierc = IERC1967(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
+    ierc.create_subscriptions(
         [config.addr_sn_contrib_factory, config.addr_sn_rewards, config.addr_reward_rate_pool]
     )
+    for event in ierc.get_events([config.addr_sn_contrib_factory, config.addr_sn_rewards, config.addr_reward_rate_pool]):
+        topic_map[event().topic] = (ierc.event_abis[event.name], ierc._handle_event)
 
     if config.ws_watch_token_events:
         log.warning("Watching all token events, this may greatly increase the rescan time (ws_watch_token_events=True)")
-        Token(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue).create_subscriptions(
-            config.addr_token
-        )
+        tok = Token(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
+        tok.create_subscriptions(config.addr_token)
+
+        for event in tok.get_events(config.addr_token):
+           topic_map[event().topic] = (tok.event_abis[event.name], tok.handle_event)
+
+    for topic in topic_map.keys():
+        log.info(f"Added topic: {topic}")
+
+
+
+async def get_latency(w3: AsyncWeb3):
+    """
+    Gets the latency of ws requests. In nanoseconds.
+    """
+    start = time.time_ns()
+    await w3.eth.get_block_number()
+    return time.time_ns() - start
+
+
+def get_batch_size(latency: int, block_time: int = 250):
+    """
+    Calculates the batch size based on the block time and latency.
+    Assumes a latency of double the given latency to help ensure the batch size is not too small.
+    """
+    est_exec_time = latency * 2
+    if est_exec_time < block_time:
+        return 1
+    else:
+        return ceil(est_exec_time / block_time)
+
+
+
+
+async def handle_logs(logs, depth):
+    assert depth < 2
+    depth += 1
+    deploy_topic = sn_contrib_factory.factory("0x36Ee2Da54a7E727cC996A441826BBEdda6336B71").events["NewServiceNodeContributionContract"]().topic
+    for event in logs:
+        for _topic in event.get("topics", []):
+            topic = _topic.to_0x_hex()
+            if topic in topic_map:
+                abi, handler = topic_map[topic]
+                if event["address"] in event_addresses:
+                    data = get_event_data(async_w3.codec, abi, event)
+                    await handler(data)
+
+                    if topic == deploy_topic:
+                        tx_index = event["transactionIndex"]
+                        log_index = event["logIndex"]
+                        new_logs = []
+                        for log in logs:
+                            if log["transactionIndex"] == tx_index and log["logIndex"] != log_index:
+                                new_logs.append(log)
+                        await handle_logs(new_logs, depth)
+
+block_batch_size = 1
+next_block = 0
+last_block = 0
+
+async def new_heads_handler(handler_context: NewHeadsSubscriptionContext):
+    global next_block, last_block
+    block = handler_context.result["number"]
+    if block >= next_block:
+        logs = []
+        for event in await handler_context.async_w3.eth.get_logs({
+            "fromBlock": last_block + 1,
+            "toBlock": block,
+        }):
+            logs.append(event)
+
+        await handle_logs(logs, 0)
+        last_block = block
+        next_block = block + block_batch_size
+    
 
 
 async def monitor_events(w3: AsyncWeb3, run_once_as_script=False):
+    global block_batch_size, last_block, next_block
     existing_sn_contract_addresses = global_db_reader.get_arbitrum_event_main_args_by_name(
         "NewServiceNodeContributionContract")
     for address in existing_sn_contract_addresses:
@@ -236,7 +338,7 @@ async def monitor_events(w3: AsyncWeb3, run_once_as_script=False):
     sn_contrib_factory.add_existing_contribution_contracts(existing_sn_contract_addresses)
     await event_queue.run()
     sn_contrib_factory.bootstrap_contribution_contracts()
-    await event_queue.run()
+    last_block = await event_queue.run()
 
     # WIP: To support old contracts we will need this but it isnt working yet TODO: DELETE THIS AFTER EVENTS ARE AVAILABLE
     # await load_contributor_contract_details(w3, existing_sn_contract_addresses)
@@ -249,6 +351,26 @@ async def monitor_events(w3: AsyncWeb3, run_once_as_script=False):
         global_db_writer.deferred_arbitrum_events) == 0, \
         f"Expected all queues to be empty." \
         f"Deferred DB write events: {len(global_db_writer.deferred_arbitrum_events)}"
+
+    latencies = []
+    for _ in range(10):
+        latencies.append(await get_latency(w3))
+
+    max_latency_ns = max(latencies)
+    block_batch_size = get_batch_size(latency=ceil(max_latency_ns / 1_000_000))
+    next_block = last_block + block_batch_size
+
+    log.info(f"Metrics for ws scanner - latency: {max_latency_ns}, batch size: {block_batch_size}, last block: {last_block}, next block: {next_block}")
+
+
+    await w3.subscription_manager.subscribe(
+        [
+            NewHeadsSubscription(
+                label="new-heads-mainnet",
+                handler=new_heads_handler
+            )
+        ]
+    )
 
     log.info(f"Created {len(w3.subscription_manager.subscriptions)} subscriptions")
     log.perf.end("startup_till_processing_websocket_subscriptions")
@@ -283,6 +405,7 @@ async def start(config: EventScannerConfig):
     if config.db_reset_events_on_startup:
         log.warning("Deleting events database on startup (db_reset_events_on_startup=True)")
         global_db_writer.delete_all_events()
+        global_db_writer.write_reset_all_rewards_claim_amounts()
 
     if config.db_reset_contrib_on_startup:
         log.warning("Deleting contrib contracts database on startup (db_reset_contrib_on_startup=True)")

@@ -140,6 +140,7 @@ CREATE TABLE network_info (
     node_count INTEGER NOT NULL,
     pulse_target_timestamp INTEGER NOT NULL,
     staking_requirement INTEGER NOT NULL,
+    total_staked INTEGER NOT NULL,
     version TEXT NOT NULL
 );
 
@@ -147,7 +148,15 @@ CREATE INDEX network_info_block_height_idx ON network_info(block_height DESC);
 
 CREATE TABLE rewards_info (
     address BLOB NOT NULL PRIMARY KEY,
-    rewards INTEGER NOT NULL
+    amount INTEGER NOT NULL,
+    lifetime_liquidated_stakes INTEGER NOT NULL,
+    lifetime_locked_stakes INTEGER NOT NULL,
+    lifetime_rewards INTEGER NOT NULL,
+    lifetime_unlocked_stakes INTEGER NOT NULL,
+    locked_stakes INTEGER NOT NULL,
+    timelocked_stakes INTEGER NOT NULL,
+    claimed_stakes INTEGER NOT NULL DEFAULT 0,
+    claimed_rewards INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE arbitrum_info (

@@ -19,6 +19,7 @@ config = EventScannerConfig(
     enable_perf=config.backend.performance_logging,
     log_level_generic=config.backend.log_level_generic,
     genesis_block=config.backend.genesis_block,
+    contrib_factory_start_block=config.backend.contrib_factory_start_block,
     ws_max_run_depth=config.backend.ws_max_run_depth,
     ws_providers=config.backend.ws_providers,
     ws_max_size=config.backend.ws_max_size,

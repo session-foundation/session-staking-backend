@@ -114,6 +114,7 @@ class DBNetworkInfo:
     node_count: int
     pulse_target_timestamp: int
     staking_requirement: int
+    total_staked: int
     version: str
 
     def __post_init__(self):
@@ -128,15 +129,11 @@ class DBNetworkInfo:
 @dataclass
 class DBContributionContract:
     address: str
-    created_timestamp: int
     fee: int
-    last_added_timestamp: int
     manual_finalize: bool
-    node_add_timestamp: int
     operator_address: str
     pubkey_bls: str
     service_node_pubkey: str
-    service_node_signature: str
     status: int
     # Not in db but added after select
     contributors: list | None
@@ -187,8 +184,30 @@ class ArbitrumInfo:
 
 @dataclass
 class RewardsInfo:
+    # Address of the wallet this object is for.
     address: str
-    rewards: int
+    # Total amount of claimable tokens for the given address. This includes the earnt rewards as well as unlocked
+    # stakes that are available to be claimed.
+    amount: int
+    # Total amount of tokens in the lifetime of the network that have been liquidated from the stakes for this address.
+    lifetime_liquidated_stakes: int
+    # Total amount of tokens in the lifetime of the network that has been staked into nodes for this address.
+    lifetime_locked_stakes: int
+    # Total amount of tokens in the lifetime of the network that has been earnt from staking into nodes for this address.
+    lifetime_rewards: int
+    # Total amount of tokens in the lifetime of the network that has been unlocked from the nodes this address has
+    # staked into.
+    lifetime_unlocked_stakes: int
+    # Amount of tokens currently locked into nodes on the network. This is `lifetime locked - lifetime unlocked`.
+    locked_stakes: int
+    # Amount of tokens that have been unstaked from nodes but cannot be claimed until the time lock on those
+    # individual stakes have been unlocked.
+    timelocked_stakes: int
+    # Amount of tokens that have been claimed from the nodes this address has staked into.
+    claimed_stakes: int  = 0
+    # Amount of tokens that have been claimed from the rewards that have been earned from the nodes this address has
+    # staked into.
+    claimed_rewards: int = 0
 
 @dataclass
 class Registration:

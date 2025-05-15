@@ -1,3 +1,4 @@
 [submodule "session-token-contracts"]
 	path = session-token-contracts
-	url = https://github.com/oxen-io/eth-sn-contracts.git
+	url = https://github.com/Doy-lee/eth-sn-contracts.git
+	branch = doyle-update-stagenet-metadata-f-new-event-emission-on-multi-contrib
