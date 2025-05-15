@@ -10,3 +10,4 @@ eth_abi==5.1.0
 requests==2.32.3
 attrs==24.2.0
 pytest==8.3.4
+py-solc-x==2.0.3

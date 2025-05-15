@@ -7,11 +7,14 @@
 The `liboxenc-dev` and `liboxenmq-dev` packages require the development headers by setting up the
 [Oxen Deb Repository](https://deb.oxen.io). Follow those instructions then they can be installed with `apt`.
 
-To run the backend on **Ubuntu >= 24.04**:
+The backend has been tested on Ubuntu 24.04. It requires Python >=3.11.x and
+`pnpm` from NodeJS >=20.12.x . To get started with this repository ensure you
+have the necessary dependencies and the submodules have been synchronised.
 
 ```shell
 apt install build-essential python3-pip python3-dev pybind11-dev liboxenc-dev liboxenmq-dev
-python3 -m pip install eth_utils web3 PyNaCl Flask uWSGI
+python3 -m pip install --requirement requirements.txt
+git submodule update --init --recursive
 ```
 
 **Python bindings for oxen-mq & oxen-encoding**
@@ -23,40 +26,26 @@ Instructions available at:
 
 ### Structure
 
-The backend is split into three parts:
+The backend has multiple parts:
 
-- **Fetcher**: `fetcher.py` is the main server that handles all the fetching, processing, and main database writing.
-- **Api**: `api.py` is the main API server that handles most requests.
-- **Registrations API**: `api_registrations.py` is the registration API server that handles all registration requests
-  and registration database management.
-
-You can just run whichever service you want, but the intended usage is to run all three:
-
-- The fetcher will create and update the main database with network, node, contract, and arbitrum information.
-- The API is purely read-only and is a glorified wrapper for the main database with caching.
-- The registration API is used to store and retrieve registration information for nodes.
+- **Events**: `app_events.py` retrieves events emitted by contracts on Arbitrum and stores them to the database
+- **Fetcher**: `app_fetcher.py` retrieves data from the Session and Arbitrum network
+- **Price**: `app_price.py` polls Coingecko for pricing information TODO: Merge this into staking
+- **Registrations**: `app_registrations.py` handles HTTP requests for Session node registrations TODO: Merge this into staking
+- **Snapshot**: TODO: Remove this class, snapshot should mean copying the DB file or using sqlite's native backup
+- **Staking**: Serves endpoints for managing the state of staking into the Session network via the staking portal website
 
 ### Instance
 
 Before running the Fetcher or API, `oxend` must be running and its address/smart contracts configured in `config.py`.
 
-### Running the Fetcher
+### Running the backend stack
 
-The fetcher is a pure python script that runs in a loop and fetches data from the smart contracts and the oxend RPC. You
-can simply run it with `python3 fetcher.py`.
+Run the backend using UWSGI (example runs it on port 4455 with 4 request handlers):
 
-### Running the API
+    uwsgi --http 127.0.0.1:4455 --master -p 4 -w src.app_staking --callable app --mule=src/app_events.py --mule=src/app_fetcher.py
 
-It's possible to run the API in flask directly, but you'll want to use uwsgi in production. Both methods are detailed
-below:
-
-    FLASK_APP=sent flask run --reload --debugger
-    uwsgi --http 127.0.0.1:5000 --master -p 4 -w api --callable app
-
-You may optionally append `--fs-reload api.py` to the `uwsgi` invocation to
-automatically restart the server when `api.py` is modified.
-
-After the server is running, visit `127.0.0.1:5000/info` to verify that the server is up and
+After the server is running, visit `127.0.0.1:4455/info` to verify that the server is up and
 responding correctly with a payload like the following:
 
 ```json
@@ -74,10 +63,6 @@ responding correctly with a payload like the following:
   "t": 1720677228.877856
 }
 ```
-
-### Running the Registrations API
-
-**Follow the same instructions as the API above. Replacing `api` with `registrations` in the commands.**
 
 ## Setting up an oxend instance
 
