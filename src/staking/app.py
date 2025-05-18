@@ -6,6 +6,7 @@ import statistics
 
 import flask
 import eth_utils
+from ens.auto import ns
 from eth_typing import ChecksumAddress
 from uwsgidecorators import timer
 from werkzeug.exceptions import GatewayTimeout
@@ -18,6 +19,7 @@ from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
 from ..util.parse import Hex64Converter, EthConverter, eth_format, parse_bls_pubkey
 from ..web3client.client import Web3Client
 from ..web3client.contracts_ws.service_node_contribution import ServiceNodeContribution
+from ..web3client.names import reverse_lookup_ens
 
 
 @dataclass
@@ -38,6 +40,9 @@ class StakingAppConfig(FlaskAppConfig):
     rpc_api_usage_logging_interval: int = None
 
     stale_time_seconds_contract_abis: int = None
+    stale_time_ens_name: int = None
+
+    web3_provider_urls_eth: list[str] = None
 
 class App(FlaskApp):
     def __init__(self, config: StakingAppConfig):
@@ -108,6 +113,9 @@ class App(FlaskApp):
 
         self.log.perf.end("get_arbitrum_sn_events")
         return self.arbitrum_sn_events, self.contribution_contract_events
+
+    def ens_reverse_lookup(self, address: str) -> str:
+        return reverse_lookup_ens(self.ns, address)
 
 
 def create_app(config: StakingAppConfig) -> App:
@@ -668,6 +676,63 @@ def create_app(config: StakingAppConfig) -> App:
     @app.route("/network")
     def route_get_network_info():
         return json_res({"network": app.cache.get("network_info_basic", getter=get_network_info_basic_uncached)})
+
+
+    """
+    //////////////////////////////////////////////////////////////
+    //                                                          //
+    //                     Name Endpoints                       //
+    //                                                          //
+    //////////////////////////////////////////////////////////////
+    """
+    def get_names_ens_batched(addresses: list[str]):
+        max_chunk_size = 1000
+
+        chunks = [addresses[i : i + max_chunk_size] for i in range(0, len(addresses), max_chunk_size)]
+        responses = []
+        app.log.debug("Chunks: {}".format(len(chunks)))
+        fn = app.ens_reverse_lookup('0x3e20171Ee536f616d82094A72cb45D831f3B4449')
+        for chunk in chunks:
+            with app.web3_client_eth.web3.batch_requests() as batch:
+                for address in chunk:
+                    app.log.debug("Batching: {}".format(address))
+                    fn = ns.name_function('0x3e20171Ee536f616d82094A72cb45D831f3B4449')
+                    print(fn)
+
+                res = batch.execute()
+                responses.extend(res)
+
+        print(responses)
+        return responses
+
+
+    def get_name_ens_cached(address: str):
+        return app.cache.get("name-ens-{}".format(address), getter=app.ens_reverse_lookup, getter_args=address, ttl=config.stale_time_ens_name)
+
+    def get_names_uncached(addresses: list[str]):
+        result = {}
+        for address in addresses:
+            name_data = {}
+            app.log.debug("get_name_ens_cached: {}".format(address))
+            ens = get_name_ens_cached(address)
+            if ens is not None:
+                name_data["ens"] = ens
+
+            if result != {}:
+                result[address] = name_data
+
+        return result
+
+    @app.route("/names/<eth_wallet:eth_wal>")
+    def route_get_name(eth_wal: str):
+        address = eth_format(eth_wal)
+        return json_res({"name": app.cache.get("names-{}".format(address), getter=get_name_ens_cached, getter_args=address)})
+
+    @app.route("/names")
+    def route_get_names():
+        addresses = app.cache.get("addresses-contribution-all", getter=app.db_reader.get_contribution_addresses)
+        return json_res({"names": app.cache.get("names-all", getter=get_names_ens_batched, getter_args=list(addresses))})
+
 
     """
     //////////////////////////////////////////////////////////////
