@@ -8,7 +8,7 @@ from web3.utils.subscriptions import EthSubscriptionContext
 
 from src.staking.write import DBWriterStaking
 from src.web3client.contracts_ws.contract_ws import ContractWS
-from src.web3client.contracts_ws.subscription import create_subscriptions, create_processed_event
+from src.web3client.contracts_ws.contract_utils import queue_past_events_for_scanning, create_processed_event
 from src.web3client.event_queue_manager import EventQueueManager
 
 
@@ -28,7 +28,7 @@ class TokenVestingStaking(ContractWS):
     async def handle_event_sub(self, event: EthSubscriptionContext):
         await self.handle_event(self._parse_event(event))
 
-    def create_subscriptions(self, address: ChecksumAddress | list[ChecksumAddress]):
+    def queue_past_events_for_scanning(self, address: ChecksumAddress | list[ChecksumAddress]):
         events = self.factory(address[0] if isinstance(address, list) else address).events
         event_list = [
             events.TokensReleased,
@@ -41,11 +41,10 @@ class TokenVestingStaking(ContractWS):
         for event in event_list:
             event.address = address
 
-        return create_subscriptions(
+        return queue_past_events_for_scanning(
             events=events,
             event_queue=self.event_queue,
             event_abis=self.event_abis,
-            handler_sub=self.handle_event_sub,
             handler_past=self.handle_event,
         )
 

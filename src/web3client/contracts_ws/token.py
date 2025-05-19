@@ -8,7 +8,7 @@ from web3.utils.subscriptions import EthSubscriptionContext
 
 from src.staking.write import DBWriterStaking
 from src.web3client.contracts_ws.contract_ws import ContractWS
-from src.web3client.contracts_ws.subscription import create_subscriptions
+from src.web3client.contracts_ws.contract_utils import queue_past_events_for_scanning
 from src.web3client.event_queue_manager import EventQueueManager
 
 
@@ -59,11 +59,10 @@ class Token(ContractWS):
             events.Approval,
         ]
 
-    def create_subscriptions(self, address: ChecksumAddress):
-        return create_subscriptions(
+    def queue_past_events_for_scanning(self, address: ChecksumAddress):
+        return queue_past_events_for_scanning(
             events=self.get_events(address),
             event_queue=self.event_queue,
             event_abis=self.event_abis,
-            handler_sub=self.handle_event_sub,
             handler_past=self.handle_event,
         )

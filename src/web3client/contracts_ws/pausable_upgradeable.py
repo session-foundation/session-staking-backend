@@ -6,7 +6,7 @@ from web3.contract.async_contract import AsyncContractEvent
 
 from src.staking.write import DBWriterStaking
 from src.web3client.contracts_ws.contract_ws import ContractWS
-from src.web3client.contracts_ws.subscription import create_subscriptions
+from src.web3client.contracts_ws.contract_utils import queue_past_events_for_scanning
 from src.web3client.event_queue_manager import EventQueueManager
 
 
@@ -24,16 +24,15 @@ class PausableUpgradeable(ContractWS):
             events.Unpaused,
         ]
 
-    def create_subscriptions(self, address: ChecksumAddress | list[ChecksumAddress]):
+    def queue_past_events_for_scanning(self, address: ChecksumAddress | list[ChecksumAddress]):
         event_list = self.get_events(address)
 
         for event in event_list:
             event.address = address
 
-        return create_subscriptions(
+        return queue_past_events_for_scanning(
             events=event_list,
             event_queue=self.event_queue,
             event_abis=self.event_abis,
-            handler_sub=self._handle_event_sub,
             handler_past=self._handle_event,
         )

@@ -6,7 +6,7 @@ from web3.utils.subscriptions import EthSubscriptionContext
 
 from src.staking.write import DBWriterStaking
 from src.web3client.contract_factory import ContractFactory
-from src.web3client.contracts_ws.subscription import parse_event, write_event_to_db
+from src.web3client.contracts_ws.contract_utils import parse_event, write_event_to_db
 from src.web3client.event_queue_manager import EventQueueManager
 
 
