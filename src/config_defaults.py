@@ -31,19 +31,21 @@ class Backend:
     WEB3 Config
     """
     web3_provider_urls:      list[str] = ["http://localhost:8545"]  # Default hardhat private chain node address)
-    web3_provider_urls_eth:  list[str] = ["http://localhost:8545"]
     web3_caller_address:    str | None = None
     web3_private_key:       str | None = None
-    addr_reward_rate_pool:         str = "0x0000000000000000000000000000000000000000"
-    addr_token:                    str = "0x0000000000000000000000000000000000000000"
+    addr_reward_rate_pool:         str = "0x11f040E89dFAbBA9070FFE6145E914AC68DbFea0"
+    addr_token:                    str = "0x10Ea9E5303670331Bdddfa66A4cEA47dae4fcF3b"
     addr_sn_contrib:               str = "0x0000000000000000000000000000000000000000"
-    addr_sn_contrib_factory:       str = "0x0000000000000000000000000000000000000000"
-    addr_sn_rewards:               str = "0x0000000000000000000000000000000000000000"
+    addr_sn_contrib_factory:       str = "0x8129bE2D5eF7ACd39483C19F28DE86b7EF19DBCA"
+    addr_sn_rewards:               str = "0xC2B9fC251aC068763EbDfdecc792E3352E351c00"
     # All block scanning will take this as the starting block, no log events can occur before a contract is deployed
     # so this is the first block that can be used to scan for events. Using 0 significantly slows down the scan.
-    # genesis_block:                 int = 114505919
-    genesis_block:                 int = 114500919
-    contrib_factory_start_block:   int = 142785134
+    genesis_block:                 int = 336099450
+    contrib_factory_start_block:   int = 336099450
+    # How many blocks until getLogs can be called
+    refresh_block_interval:        int = 8  # Measured in Arb blocks
+    # Max block range for a getLogs call
+    get_logs_cap:                  int = 100000
 
     """
     DB CONFIG
@@ -57,7 +59,6 @@ class Backend:
     """
     API CONFIG
     """
-    rpc_api:                          str = ""
     rpc_api_cache:                    int = 2
     rpc_api_usage_logging:           bool = False
     rpc_api_usage_logging_interval:   int = 300
@@ -91,7 +92,7 @@ class Backend:
     """
     VESTING
     """
-    vesting_contract_details_csv: str = "vesting.csv"
+    vesting_contract_details_csv: None | str = None
     reset_vesting_contracts_on_startup: bool = False
 
     """
@@ -141,6 +142,8 @@ mainnet_backend = Backend()
 mainnet_backend.oxen_wallet_regex      = f'L[{B58_ALPHABET}]{{94}}"'
 mainnet_backend.rpc_shared             = "ipc://oxend/mainnet.sock"
 mainnet_backend.sqlite_db              = "ssb-mainnet.db"
+mainnet_backend.ws_providers            = ["ws://10.24.0.1/arb/ws"]
+mainnet_backend.web3_provider_urls      = ["http://10.24.0.1/arb"]
 
 # Session testnet contracts
 testnet_backend = Backend()
@@ -169,6 +172,8 @@ stagenet_backend.rpc_shared              = "tcp://localhost:6786"
 stagenet_backend.sqlite_db               = "ssb-stagenet.db"
 stagenet_backend.ws_providers            = ["ws://10.24.0.1/arb_sepolia/ws"]
 stagenet_backend.web3_provider_urls      = ["http://10.24.0.1/arb_sepolia"]
+stagenet_backend.genesis_block           = 114500919
+stagenet_backend.contrib_factory_start_block = 142785134
 
 # Assign the active backend to be used in the sent-staking-backend
 backend = stagenet_backend
