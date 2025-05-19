@@ -307,6 +307,8 @@ class App:
 
         rewards_info = self.get_rewards_info()
         self.db_writer.write_rewards_info_to_db(rewards_info)
+        now = time.time()
+        self.db_writer.update_daily_rolling_rewards(rewards_info, current_height, now)
 
         self.log.info("Scheduled task finish")
 

@@ -210,6 +210,12 @@ class RewardsInfo:
     claimed_rewards: int = 0
 
 @dataclass
+class DailyRewardInfoNode:
+    block: int
+    lifetime_rewards: int
+    timestamp: int
+
+@dataclass
 class Registration:
     operator: bytes
     pubkey_bls: bytes
