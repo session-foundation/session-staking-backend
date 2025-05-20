@@ -9,7 +9,7 @@ from web3.utils.subscriptions import EthSubscriptionContext
 from src.staking.read import DBReaderStaking
 from src.staking.write import DBWriterStaking
 from src.web3client.contracts_ws.contract_ws import ContractWS
-from src.web3client.contracts_ws.subscription import create_subscriptions
+from src.web3client.contracts_ws.contract_utils import queue_past_events_for_scanning
 from src.web3client.event_queue_manager import EventQueueManager
 
 def handle_claim(event: EventData, db_writer: DBWriterStaking, db_reader: DBReaderStaking, log: logging):
@@ -99,11 +99,10 @@ class ServiceNodeRewards(ContractWS):
             events.BLSNonSignerThresholdMaxUpdated,
         ]
 
-    def create_subscriptions(self, address: ChecksumAddress):
-        return create_subscriptions(
+    def queue_past_events_for_scanning(self, address: ChecksumAddress):
+        return queue_past_events_for_scanning(
             events=self.get_events(address),
             event_queue=self.event_queue,
             event_abis=self.event_abis,
-            handler_sub=self.handle_event_sub,
             handler_past=self.handle_event,
         )

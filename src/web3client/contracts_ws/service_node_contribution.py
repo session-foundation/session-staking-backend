@@ -11,7 +11,7 @@ from src.staking.read import DBReaderStaking
 from src.staking.write import DBWriterStaking
 from src.util.parse import parse_ed25519_pubkey, parse_bls_pubkey
 from src.web3client.contracts_ws.contract_ws import ContractWS
-from src.web3client.contracts_ws.subscription import create_subscriptions, create_processed_event
+from src.web3client.contracts_ws.contract_utils import queue_past_events_for_scanning, create_processed_event
 from src.web3client.event_queue_manager import EventQueueManager
 
 
@@ -189,17 +189,16 @@ class ServiceNodeContribution(ContractWS):
         events = self.factory(address[0] if isinstance(address, list) else address).events
         return [events[name] for name in self.event_names]
 
-    def create_subscriptions(self, address: ChecksumAddress | list[ChecksumAddress], start_block: int = 0):
+    def queue_past_events_for_scanning(self, address: ChecksumAddress | list[ChecksumAddress], start_block: int = 0):
         event_list = self.get_events(address)
 
         for event in event_list:
             event.address = address
 
-        return create_subscriptions(
+        return queue_past_events_for_scanning(
             events=event_list,
             event_queue=self.event_queue,
             event_abis=self.event_abis,
-            handler_sub=self.handle_event_sub,
             handler_past=self.handle_event,
             start_block=start_block,
         )

@@ -3,7 +3,8 @@ from contextlib import closing
 
 from ..db.read import DBReader
 from .dataclasses import DBNode, DBContributionMain, DBNetworkInfo, DBContributionContract, \
-    DBContributionContractContribution, SmartContractABI, ArbitrumInfo, VestingContract, RewardsInfo
+    DBContributionContractContribution, SmartContractABI, ArbitrumInfo, VestingContract, RewardsInfo, \
+    DailyRewardInfoNode
 from ..db.util import sql_connect_in_read_mode
 from ..log import Log
 from ..util.parse import eth_format
@@ -252,9 +253,18 @@ class DBReaderStaking:
         with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT * FROM rewards_info WHERE address = ?", (address,))
+                if cursor.rowcount == 0:
+                    return None
                 info = RewardsInfo(*cursor.fetchone())
                 self.log.debug("Rewards info: {}".format(info))
                 self.log.perf.end("get_rewards_info_for_address")
+                return info
+
+    def get_daily_rewards_info_for_address(self, address: str, from_block: int = 0):
+        with closing(sql_connect_in_read_mode(self.db_path)) as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute("SELECT block, lifetime_rewards, timestamp FROM daily_rewards_info WHERE address = ? AND block >= ?", (address, from_block))
+                info = [DailyRewardInfoNode(*node) for node in cursor.fetchall()]
                 return info
 
     def get_smart_contract_abis(self):

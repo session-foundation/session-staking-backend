@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
-from math import ceil
+from functools import partial
 
 from attr import dataclass
 
@@ -11,8 +11,7 @@ from eth_utils import is_checksum_address, to_checksum_address
 from web3 import AsyncWeb3, WebSocketProvider
 from web3._utils.events import get_event_data
 from web3.auto.gethdev import async_w3
-from web3.types import LogReceipt
-from web3.utils.subscriptions import NewHeadsSubscriptionContext, NewHeadsSubscription, LogsSubscription
+from web3.utils.subscriptions import NewHeadsSubscriptionContext, NewHeadsSubscription
 
 from src.config_validate import validate_log_config, validate_contract_addresses
 from src.db.util import is_db_initialized, init_db
@@ -91,6 +90,8 @@ class EventScannerConfig:
     addr_sn_contrib_factory: ChecksumAddress
     addr_sn_rewards: ChecksumAddress
     addr_reward_rate_pool: ChecksumAddress
+    get_logs_cap: int
+    refresh_block_interval: int
     sqlite_db: str
     sqlite_schema: str
     db_reset_events_on_startup: bool
@@ -190,7 +191,7 @@ async def load_vesting_staking_contracts(w3: AsyncWeb3, details: list[VestingCon
                 f"Added vesting contract {contract.address} with initial balance {contract.initial_amount} for {contract.beneficiary}")
 
     log.info(f"Subscribing to {len(address_list)} vesting contracts")
-    contract_interface.create_subscriptions(address=address_list)
+    contract_interface.queue_past_events_for_scanning(address=address_list)
 
 
 async def init_global_contracts(w3: AsyncWeb3, config: EventScannerConfig):
@@ -200,25 +201,26 @@ async def init_global_contracts(w3: AsyncWeb3, config: EventScannerConfig):
     start_block = last_event_block + 1 if last_event_block else config.genesis_block
     log.info(f"Last block for an event from the database: {last_event_block}, starting from block {start_block}")
 
-    event_queue = EventQueueManager(w3=w3, log=log, start_block=start_block, max_run_depth=config.ws_max_run_depth)
+    event_queue = EventQueueManager(w3=w3, log=log, start_block=start_block, max_run_depth=config.ws_max_run_depth, get_logs_cap=config.get_logs_cap)
 
-    await load_vesting_staking_contracts(w3, details=config.vesting_contract_details)
+    if len(config.vesting_contract_details) > 0 :
+        await load_vesting_staking_contracts(w3, details=config.vesting_contract_details)
 
     sn_contrib_factory = ServiceNodeContributionFactory(w3=w3, db_writer=global_db_writer, db_reader=global_db_reader,
                                                         log=log, event_queue=event_queue, start_block=max(config.contrib_factory_start_block, start_block), topic_map=topic_map, event_addresses=event_addresses)
-    sn_contrib_factory.create_subscriptions(address=config.addr_sn_contrib_factory)
+    sn_contrib_factory.queue_past_events_for_scanning(address=config.addr_sn_contrib_factory)
     event_addresses.add(config.addr_sn_contrib_factory)
     for event in sn_contrib_factory.get_events(config.addr_sn_contrib_factory):
         topic_map[event().topic] = (sn_contrib_factory.event_abis[event.name], sn_contrib_factory.handle_event)
 
     snr = ServiceNodeRewards(w3=w3, db_writer=global_db_writer, db_reader=global_db_reader, log=log, event_queue=event_queue)
-    snr.create_subscriptions(config.addr_sn_rewards)
+    snr.queue_past_events_for_scanning(config.addr_sn_rewards)
     event_addresses.add(config.addr_sn_rewards)
     for event in snr.get_events(config.addr_sn_rewards):
         topic_map[event().topic] = (snr.event_abis[event.name], snr.handle_event)
 
     rrp = RewardRatePool(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
-    rrp.create_subscriptions(
+    rrp.queue_past_events_for_scanning(
         config.addr_reward_rate_pool
     )
     event_addresses.add(config.addr_reward_rate_pool)
@@ -226,7 +228,7 @@ async def init_global_contracts(w3: AsyncWeb3, config: EventScannerConfig):
         topic_map[event().topic] = (rrp.event_abis[event.name], rrp.handle_event)
 
     osu = Ownable2StepUpgradeable(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
-    osu.create_subscriptions(
+    osu.queue_past_events_for_scanning(
         [config.addr_sn_contrib_factory, config.addr_sn_rewards, config.addr_reward_rate_pool]
     )
     for event in osu.get_events([config.addr_sn_contrib_factory, config.addr_sn_rewards, config.addr_reward_rate_pool]):
@@ -234,14 +236,14 @@ async def init_global_contracts(w3: AsyncWeb3, config: EventScannerConfig):
 
 
     pu = PausableUpgradeable(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
-    pu.create_subscriptions(
+    pu.queue_past_events_for_scanning(
         [config.addr_sn_contrib_factory, config.addr_sn_rewards]
     )
     for event in pu.get_events([config.addr_sn_contrib_factory, config.addr_sn_rewards]):
         topic_map[event().topic] = (pu.event_abis[event.name], pu._handle_event)
 
     ierc = IERC1967(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
-    ierc.create_subscriptions(
+    ierc.queue_past_events_for_scanning(
         [config.addr_sn_contrib_factory, config.addr_sn_rewards, config.addr_reward_rate_pool]
     )
     for event in ierc.get_events([config.addr_sn_contrib_factory, config.addr_sn_rewards, config.addr_reward_rate_pool]):
@@ -250,7 +252,7 @@ async def init_global_contracts(w3: AsyncWeb3, config: EventScannerConfig):
     if config.ws_watch_token_events:
         log.warning("Watching all token events, this may greatly increase the rescan time (ws_watch_token_events=True)")
         tok = Token(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
-        tok.create_subscriptions(config.addr_token)
+        tok.queue_past_events_for_scanning(config.addr_token)
 
         for event in tok.get_events(config.addr_token):
            topic_map[event().topic] = (tok.event_abis[event.name], tok.handle_event)
@@ -269,24 +271,10 @@ async def get_latency(w3: AsyncWeb3):
     return time.time_ns() - start
 
 
-def get_batch_size(latency: int, block_time: int = 250):
-    """
-    Calculates the batch size based on the block time and latency.
-    Assumes a latency of double the given latency to help ensure the batch size is not too small.
-    """
-    est_exec_time = latency * 2
-    if est_exec_time < block_time:
-        return 1
-    else:
-        return ceil(est_exec_time / block_time)
-
-
-
-
-async def handle_logs(logs, depth):
+async def handle_logs(config: EventScannerConfig, handler_context: NewHeadsSubscriptionContext, logs, depth):
     assert depth < 2
     depth += 1
-    deploy_topic = sn_contrib_factory.factory("0x36Ee2Da54a7E727cC996A441826BBEdda6336B71").events["NewServiceNodeContributionContract"]().topic
+    deploy_topic = sn_contrib_factory.factory(config.addr_sn_contrib_factory).events["NewServiceNodeContributionContract"]().topic
     for event in logs:
         for _topic in event.get("topics", []):
             topic = _topic.to_0x_hex()
@@ -297,56 +285,78 @@ async def handle_logs(logs, depth):
                     await handler(data)
 
                     if topic == deploy_topic:
-                        tx_index = event["transactionIndex"]
-                        log_index = event["logIndex"]
+                        block = event["blockNumber"]
+                        contract_address = event.args.get("contributorContract")
                         new_logs = []
-                        for log in logs:
-                            if log["transactionIndex"] == tx_index and log["logIndex"] != log_index:
-                                new_logs.append(log)
-                        await handle_logs(new_logs, depth)
+                        for new_event in await handler_context.async_w3.eth.get_logs({
+                            "fromBlock": block,
+                            "toBlock": block,
+                            "address": contract_address,
+                        }):
+                            logs.append(new_event)
+                        await handle_logs(config, handler_context, new_logs, depth)
 
-block_batch_size = 1
 next_block = 0
 last_block = 0
 
-async def new_heads_handler(handler_context: NewHeadsSubscriptionContext):
+async def new_heads_handler(config: EventScannerConfig, handler_context: NewHeadsSubscriptionContext):
     global next_block, last_block
     block = handler_context.result["number"]
     if block >= next_block:
         logs = []
+        cutoff = last_block + config.get_logs_cap
+        was_cut_off = False
+        if block > cutoff:
+            block = cutoff
+            was_cut_off = True
+
+        block = min(block, last_block + config.get_logs_cap)
         for event in await handler_context.async_w3.eth.get_logs({
             "fromBlock": last_block + 1,
             "toBlock": block,
+            "address": list(event_addresses),
         }):
             logs.append(event)
 
-        await handle_logs(logs, 0)
+        await handle_logs(config, handler_context, logs, 0)
         last_block = block
-        next_block = block + block_batch_size
+        next_block = block + (1 if was_cut_off else config.refresh_block_interval)
     
 
 
-async def monitor_events(w3: AsyncWeb3, run_once_as_script=False):
-    global block_batch_size, last_block, next_block
+async def monitor_events(config: EventScannerConfig, w3: AsyncWeb3, run_once_as_script=False):
+    global last_block, next_block
     existing_sn_contract_addresses = global_db_reader.get_arbitrum_event_main_args_by_name(
         "NewServiceNodeContributionContract")
     for address in existing_sn_contract_addresses:
         assert is_checksum_address(
             address), f"Invalid existing NewServiceNodeContributionContract contract address: {address}"
 
+    # Note: We need the current block just before we subscribe to new heads, this block number is used to fetch all
+    # past events up to and including this "current block". Once we get this block we immediately subscribe to new
+    # heads, which will start filling up the websocket queue with all the blocks we might miss while we scan for
+    # past events. Once past events are scanned for we'll have a large queue of blocks to catch up on, which we will
+    # start processing in the subscription queue.
+    current_block = await w3.eth.get_block_number()
+    await w3.subscription_manager.subscribe(
+        [
+            NewHeadsSubscription(
+                label="new-heads-mainnet",
+                handler=partial(new_heads_handler, config)
+            )
+        ]
+    )
+
+    log.info(f"Created {len(w3.subscription_manager.subscriptions)} subscriptions")
+
     global_db_writer.defer_writing_arbitrum_events = True
     sn_contrib_factory.add_existing_contribution_contracts(existing_sn_contract_addresses)
-    await event_queue.run()
-    sn_contrib_factory.bootstrap_contribution_contracts()
-    last_block = await event_queue.run()
-
-    # WIP: To support old contracts we will need this but it isnt working yet TODO: DELETE THIS AFTER EVENTS ARE AVAILABLE
-    # await load_contributor_contract_details(w3, existing_sn_contract_addresses)
+    last_block = max(config.contrib_factory_start_block, await event_queue.run(current_block=current_block))
 
     global_db_writer.defer_writing_arbitrum_events = False
     global_db_writer.write_deferred_arbitrum_events_to_db()
 
-    assert len(event_queue.sub_queue) == 0 and len(
+    assert len(
         event_queue.event_queue) == 0 and len(
         global_db_writer.deferred_arbitrum_events) == 0, \
         f"Expected all queues to be empty." \
@@ -357,22 +367,10 @@ async def monitor_events(w3: AsyncWeb3, run_once_as_script=False):
         latencies.append(await get_latency(w3))
 
     max_latency_ns = max(latencies)
-    block_batch_size = get_batch_size(latency=ceil(max_latency_ns / 1_000_000))
-    next_block = last_block + block_batch_size
+    next_block = last_block + config.refresh_block_interval
 
-    log.info(f"Metrics for ws scanner - latency: {max_latency_ns}, batch size: {block_batch_size}, last block: {last_block}, next block: {next_block}")
+    log.info(f"Metrics for ws scanner - latency: {max_latency_ns}, batch size: {config.refresh_block_interval}, last block: {last_block}, next block: {next_block}")
 
-
-    await w3.subscription_manager.subscribe(
-        [
-            NewHeadsSubscription(
-                label="new-heads-mainnet",
-                handler=new_heads_handler
-            )
-        ]
-    )
-
-    log.info(f"Created {len(w3.subscription_manager.subscriptions)} subscriptions")
     log.perf.end("startup_till_processing_websocket_subscriptions")
     if run_once_as_script:
         log.info("run_once_as_script is True, exiting...")
@@ -418,11 +416,15 @@ async def start(config: EventScannerConfig):
     log.info("Starting event scanner")
     provider = config.ws_providers[0]
     async for w3 in AsyncWeb3(
-            WebSocketProvider(provider, websocket_kwargs={"max_size": config.ws_max_size}, request_timeout=300)
+            WebSocketProvider(provider, websocket_kwargs={"max_size": config.ws_max_size},
+                              request_timeout=300,
+                              # one hour of arbitrum blocks in the queue, the high number is required because blocks
+                              # pile up in the queue while rescanning the chain.
+                              subscription_response_queue_size=3600*4)
     ):
         # TODO: investigate if this properly handles disconnects
         await init_global_contracts(w3, config)
-        await asyncio.create_task(monitor_events(w3=w3, run_once_as_script=config.run_once_as_script))
+        await asyncio.create_task(monitor_events(config=config, w3=w3, run_once_as_script=config.run_once_as_script))
         if config.run_once_as_script:
             log.info("Exiting websocket disconnection loop as run_once_as_script is True")
             break

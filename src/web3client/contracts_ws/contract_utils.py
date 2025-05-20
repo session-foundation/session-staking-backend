@@ -3,36 +3,26 @@ from collections.abc import Callable
 from web3._utils.events import get_event_data
 from web3.contract.async_contract import AsyncContractEvent
 from web3.types import EventData
-from web3.utils.subscriptions import LogsSubscription, EthSubscriptionContext
+from web3.utils.subscriptions import EthSubscriptionContext
 
 from src.staking.write import DBWriterStaking
 from src.web3client.event_queue_manager import EventQueueManager
 from src.web3client.event_scanner import ProcessedEvent
 
 
-def create_subscriptions(
+def queue_past_events_for_scanning(
         events: list[AsyncContractEvent],
         event_queue: EventQueueManager,
-        handler_sub: Callable,
         handler_past: Callable = None,
         event_abis: dict[str, any] = None,
         start_block: int = None,
 ):
     assert isinstance(event_queue, EventQueueManager), "event_queue must be an instance of EventQueueManager"
     for event in events:
-        label_address = event.address[0] if isinstance(event.address, list) else event.address
-        label = f"{event.name}_{label_address}"
-
-        event_queue.add(
+        event_queue.add_event(
             event=event,
             handler=handler_past,
             start_block=start_block,
-            sub=LogsSubscription(
-                label=label,
-                address=event.address,
-                topics=[event().topic],
-                handler=handler_sub,
-            ),
         )
 
         if event.name not in event_abis:

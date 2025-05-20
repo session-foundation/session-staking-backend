@@ -463,6 +463,54 @@ class DBWriterStaking:
             connection.commit()
             self.log.perf.end("write_rewards_info_to_db")
 
+    def update_daily_rolling_rewards(self, rewards_info: list[RewardsInfo], block: int, timestamp: int):
+        self.log.perf.start("update_daily_rolling_rewards")
+        with closing(sql_connect_in_write_mode(self.db_path)) as connection:
+            connection.execute("BEGIN")
+            with closing(connection.cursor()) as cursor:
+                self.log.debug("Deleting expired daily rolling rewards")
+
+                # Keep 26 hours of rewards for a safe buffer, we only care about the last 24 hours
+                delete_before_timestamp = timestamp - 26 * 60 * 60
+
+                cursor.execute(
+                    """
+                    DELETE FROM daily_rewards_info WHERE timestamp < ?
+                    """
+                , (delete_before_timestamp,))
+
+                self.log.debug("Updating daily rolling rewards")
+                cursor.executemany(
+                    """
+                    INSERT INTO daily_rewards_info (
+                        address,
+                        block,
+                        lifetime_rewards,
+                        timestamp
+                    )
+                    VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING;
+                    """,
+                    (
+                        (
+                            info.address,
+                            block,
+                            info.lifetime_rewards,
+                            timestamp
+                        )
+                        for info in rewards_info
+                    ),
+                )
+
+                inserted_rewards_rows = cursor.rowcount
+
+                self.log.debug(
+                    "Inserted {} rows into daily_rewards_info".format(inserted_rewards_rows)
+                )
+
+                connection.commit()
+                self.log.perf.end("update_daily_rolling_rewards")
+
+
     def write_update_rewards_claim_amounts(self, address: str, claimed_stakes: int, claimed_rewards: int):
         self.log.perf.start("write_update_rewards_claim_amounts")
         with closing(sql_connect_in_write_mode(self.db_path)) as connection:

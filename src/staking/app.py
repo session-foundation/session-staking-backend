@@ -10,7 +10,7 @@ from eth_typing import ChecksumAddress
 from uwsgidecorators import timer
 from werkzeug.exceptions import GatewayTimeout
 
-from .dataclasses import ArbitrumInfo, RewardsInfo
+from .dataclasses import ArbitrumInfo, RewardsInfo, DailyRewardInfoNode
 from .read import DBReaderStaking
 from ..oxen.rpc import OxenRPC
 from ..registration.read import DBReaderRegistrations
@@ -30,7 +30,6 @@ class StakingAppConfig(FlaskAppConfig):
     sqlite_db_registrations: str = None
     sqlite_schema_registrations: str = None
 
-    rpc_api: str = None
     rpc_api_cache: int = None
     rpc_shared: str = None
     rpc_shared_cache: int = None
@@ -54,7 +53,6 @@ class App(FlaskApp):
             perf=config.enable_perf,
         )
 
-        rpc_url = config.rpc_api if config.rpc_api else config.rpc_shared
         rpc_cache = (
             config.rpc_api_cache
             if config.rpc_api_cache
@@ -63,7 +61,7 @@ class App(FlaskApp):
 
         self.rpc = OxenRPC(
             logger=self.log,
-            rpc_url=rpc_url,
+            rpc_url=config.rpc_shared,
             cache_seconds=rpc_cache,
             usage_tracking=config.rpc_api_usage_logging,
         )
@@ -147,13 +145,6 @@ def create_app(config: StakingAppConfig) -> App:
 
     def get_network_info_cached():
         return app.cache.get("network_info", getter=get_network_info_uncached, ttl=1)
-
-    def get_arbitrum_events_cached():
-        return app.cache.get("arbitrum_events_all", getter=app.get_arbitrum_events, ttl=1)
-
-
-    def get_contribution_contracts_for_address_uncached(address: str):
-        return []
 
     def get_contribution_contracts_for_address_cached(address: str):
         return app.cache.get(f"contribution_contracts-{address}", getter=get_related_contribution_contracts_for_eth_address_uncached, getter_args=address, ttl=1)
@@ -561,6 +552,18 @@ def create_app(config: StakingAppConfig) -> App:
                 return flask.abort(408)
 
         return flask.abort(405)  # Method not allowed
+
+    def get_daily_rewards_info(eth_wal: str):
+        return app.db_reader.get_daily_rewards_info_for_address(eth_wal, 0)
+
+    def get_daily_rewards_info_cached(eth_wal: str):
+        return app.cache.get(f"daily-rewards-info-{eth_wal}", getter=get_daily_rewards_info, getter_args=eth_wal,
+                             invalidate_timestamp=get_next_block_timestamp_est())
+
+    @app.route("/daily-rewards/<eth_wallet:eth_wal>")
+    def get_daily_rewards(eth_wal: str):
+        return json_res({"rewards": get_daily_rewards_info_cached(eth_wal)})
+
 
     """
     //////////////////////////////////////////////////////////////
