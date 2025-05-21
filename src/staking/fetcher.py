@@ -328,16 +328,20 @@ class App:
             nodes: list[ServiceNode] = res.get("service_node_states")
             self.log.debug("Fetched {} service nodes".format(len(nodes)))
 
-            new_sn_events = self.db_reader.get_arbitrum_events_by_name("NewSeededServiceNode",
+            new_seed_events = self.db_reader.get_arbitrum_events_by_name("NewSeededServiceNode",
                                                                         from_block=self.last_new_sn_event + 1)
-            new_v2_events = self.db_reader.get_arbitrum_events_by_name("NewServiceNodeV2",
+            new_sn_events = self.db_reader.get_arbitrum_events_by_name("NewServiceNodeV2",
                                                                        from_block=self.last_new_sn_event + 1)
 
-            new_sn_events.extend(new_v2_events)
-
-            if len(new_sn_events) == 0:
+            if len(new_seed_events)== 0 and len(new_sn_events) == 0:
                 self.log.warning("No new service node events found, waiting for new events")
                 return
+
+
+            for event in new_seed_events:
+                self.contract_id_map[parse_bls_pubkey(event.args["ed25519Pubkey"])] = event.args["serviceNodeID"]
+                if event.block > self.last_new_sn_event:
+                    self.last_new_sn_event = event.block
 
             for event in new_sn_events:
                 self.contract_id_map[parse_bls_pubkey(event.args["pubkey"])] = event.args["serviceNodeID"]
