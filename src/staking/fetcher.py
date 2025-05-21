@@ -328,8 +328,13 @@ class App:
             nodes: list[ServiceNode] = res.get("service_node_states")
             self.log.debug("Fetched {} service nodes".format(len(nodes)))
 
-            new_sn_events = self.db_reader.get_arbitrum_events_by_name("NewServiceNodeV2",
+            new_sn_events = self.db_reader.get_arbitrum_events_by_name("NewSeededServiceNode",
+                                                                        from_block=self.last_new_sn_event + 1)
+            new_v2_events = self.db_reader.get_arbitrum_events_by_name("NewServiceNodeV2",
                                                                        from_block=self.last_new_sn_event + 1)
+
+            new_sn_events.extend(new_v2_events)
+
             if len(new_sn_events) == 0:
                 self.log.warning("No new service node events found, waiting for new events")
                 return
