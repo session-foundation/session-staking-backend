@@ -337,9 +337,8 @@ class App:
                 self.log.warning("No new service node events found, waiting for new events")
                 return
 
-
             for event in new_seed_events:
-                self.contract_id_map[parse_bls_pubkey(event.args["ed25519Pubkey"])] = event.args["serviceNodeID"]
+                self.contract_id_map[parse_bls_pubkey(event.args["blsPubkey"])] = event.args["serviceNodeID"]
                 if event.block > self.last_new_sn_event:
                     self.last_new_sn_event = event.block
 
