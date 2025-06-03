@@ -9,7 +9,7 @@ def get_latest_price(db_path: str, token: str):
         with closing(connection.cursor()) as cursor:
             cursor.execute(
                 """
-                SELECT * FROM prices WHERE token = ? ORDER BY updated_at DESC LIMIT 1
+                SELECT * FROM prices WHERE token = ? ORDER BY fetched_at DESC LIMIT 1
                 """,
                 (token,),
             )
