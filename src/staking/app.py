@@ -154,8 +154,9 @@ def create_app(config: StakingAppConfig) -> App:
 
     def get_vesting_contracts_for_beneficiary_cached(beneficiary: str):
         contracts = []
-        for contract in get_vesting_contracts_cached():
-            if contract.beneficiary == beneficiary:
+        vesting = get_vesting_contracts_cached()
+        for contract in vesting:
+            if eth_format(contract.beneficiary) == beneficiary:
                 contracts.append(contract)
         return contracts
 
