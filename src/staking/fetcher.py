@@ -335,7 +335,7 @@ class App:
 
             if len(new_seed_events)== 0 and len(new_sn_events) == 0:
                 self.log.warning("No new service node events found, waiting for new events")
-                return
+                return parsed_nodes, contributions, current_height, len(parsed_nodes), total_staked, active_node_count
 
             for event in new_seed_events:
                 self.contract_id_map[parse_bls_pubkey(event.args["blsPubkey"])] = event.args["serviceNodeID"]
@@ -355,13 +355,15 @@ class App:
 
                     pubkey_bls = node.get("pubkey_bls")
                     contract_id = self.contract_id_map.get(pubkey_bls)
+                    if contract_id is None:
+                        continue
                     node["contract_id"] = contract_id
 
                     if node["contract_id"] is None:
                         self.log.warning(
                             "Contract ID not found for node with BLS pubkey: {}".format(pubkey_bls)
                         )
-                    assert node["contract_id"] is not None
+                    #assert node["contract_id"] is not None
 
                     # Remove some fields that might appear if field:all is passed to the rpc
                     if "portions_for_operator" in node:
@@ -450,8 +452,10 @@ class App:
 
             pubkey_bls = entry.get("info").get("bls_public_key")
             if pubkey_bls is None:
-                self.log.warning(f"info.bls_public_key is None for bls_exit_liquidation_list entry: {entry}")
-                continue
+                pubkey_bls = entry.get("info").get("pubkey_bls")
+                if pubkey_bls is None:
+                    self.log.warning(f"info.bls_public_key is None for bls_exit_liquidation_list entry: {entry}")
+                    continue
 
             exit_type = entry.get("type")
             exit_events.append(
