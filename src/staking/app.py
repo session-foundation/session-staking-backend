@@ -182,9 +182,16 @@ def create_app(config: StakingAppConfig) -> App:
     def get_added_bls_keys():
         events_exit = app.db_reader.get_arbitrum_events_by_name("ServiceNodeExit")
         sn_ids_exited = set([event.args["serviceNodeID"] for event in events_exit])
-
+        new_seed_events = app.db_reader.get_arbitrum_events_by_name("NewSeededServiceNode")
+        new_sn_v2_events = app.db_reader.get_arbitrum_events_by_name("NewServiceNodeV2")
         contract_id_map = {}
-        for event in app.db_reader.get_arbitrum_events_by_name("NewServiceNodeV2"):
+
+        for event in new_seed_events:
+            sn_id = event.args["serviceNodeID"]
+            if sn_id not in sn_ids_exited:
+                contract_id_map[parse_bls_pubkey(event.args["blsPubkey"])] = sn_id
+
+        for event in new_sn_v2_events:
             sn_id = event.args["serviceNodeID"]
             if sn_id not in sn_ids_exited:
                 contract_id_map[parse_bls_pubkey(event.args["pubkey"])] = sn_id
@@ -212,12 +219,13 @@ def create_app(config: StakingAppConfig) -> App:
 
         related_nodes = []
         for node in nodes:
-            if eth_format(node.operator_address) == address:
-                related_nodes.append(node)
-            elif node.contributors is not None:
-                for contributor in node.contributors:
+            for contributor in node.contributors:
+                try:
                     if eth_format(contributor.address) == address:
                         related_nodes.append(node)
+                except Exception as e:
+                    app.log.exception(e)
+                    continue
 
         return related_nodes
 
