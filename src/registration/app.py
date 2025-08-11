@@ -97,10 +97,13 @@ def create_app(config: RegistrationAppConfig) -> App:
         stake requires an additional interaction through a multi-contributor contract while solo
         registrations can call the staking contract directly.
         """
-
         try:
+            # TODO: replace with network type validation
+            def check_network(k,v):
+                return v
             params = parse_query_params(
                 {
+                    "network": check_network,
                     "pubkey_bls": byte_decoder(64),
                     "sig_ed25519": byte_decoder(64),
                     "sig_bls": byte_decoder(128),
@@ -112,6 +115,7 @@ def create_app(config: RegistrationAppConfig) -> App:
 
             check_reg_keys_sigs(params)
         except ValueError as e:
+            app.log.exception(e)
             return json_response({"error": f"Invalid registration: {e}"})
 
         app.db_writer.write_registration_to_db(params)

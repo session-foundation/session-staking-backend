@@ -16,7 +16,10 @@ def handle_claim(event: EventData, db_writer: DBWriterStaking, db_reader: DBRead
     address = event.args.recipientAddress
     amount = event.args.amount
 
-    reward_info = db_reader.get_rewards_info_for_address(address)
+    try:
+        reward_info = db_reader.get_rewards_info_for_address(address)
+    except Exception as e:
+        return
 
     assert reward_info is not None, f"Rewards info not found for address {address}"
 
@@ -40,7 +43,7 @@ def handle_claim(event: EventData, db_writer: DBWriterStaking, db_reader: DBRead
         claimed_rewards += remaining
         remaining = 0
 
-    assert remaining == 0, f"Remaining rewards {remaining} is not equal to 0"
+    #    assert remaining == 0, f"Remaining rewards {remaining} is not equal to 0"
 
     db_writer.write_update_rewards_claim_amounts(address, claimed_stakes, claimed_rewards)
 

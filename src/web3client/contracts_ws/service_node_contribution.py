@@ -79,7 +79,7 @@ class ContributionContract:
             self._contributors[address].amount -= amount
             if self._contributors[address].amount == 0:
                 del self._contributors[address]
-                self.db_writer.write_delete_contribution_contract_contributor(self.address)
+                self.db_writer.write_delete_contribution_contract_contributor(self.address, address)
             else:
                 self.db_writer.write_update_contribution_contract_contributor(self.address, self._contributors[address])
         else:

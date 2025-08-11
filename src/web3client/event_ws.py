@@ -110,7 +110,7 @@ class EventScannerConfig:
 
 async def load_vesting_staking_contracts(w3: AsyncWeb3, details: list[VestingContractDetails]):
     contract_interface = TokenVestingStaking(w3=w3, db_writer=global_db_writer, log=log, event_queue=event_queue)
-    token_contract = Token(w3=w3, db_writer=global_db_writer, log=log).factory(details[0].SESH)
+    #token_contract = Token(w3=w3, db_writer=global_db_writer, log=log).factory(details[0].SESH)
 
     if global_db_reader.has_vesting_contracts():
         if len(details) > 0:
@@ -125,20 +125,20 @@ async def load_vesting_staking_contracts(w3: AsyncWeb3, details: list[VestingCon
         address_list = [contract.vesting_address for contract in details]
 
         now = time.time()
-        res = await contract_interface.batch_get_details(address_list, token_contract)
-
+        #res = await contract_interface.batch_get_details(address_list, token_contract
+        res = []
         contracts = []
-        for i in range(0, len(res), contract_interface.batch_items):
-            known_details = details[i // contract_interface.batch_items]
-            beneficiary = res[i]
-            revoker = res[i + 1]
+        for known_details in details:
+            #known_details = details[i // contract_interface.batch_items]
+            #beneficiary = res[i]
+            #revoker = res[i + 1]
             # amount = res[i + 2]
-            transferable_beneficiary = res[i + 3]
-            start = res[i + 4]
-            end = res[i + 5]
-            SESH = res[i + 6]
-            rewards_contract = res[i + 7]
-            sn_contrib_factory = res[i + 8]
+            #transferable_beneficiary = res[i + 3]
+            #start = res[i + 4]
+            #end = res[i + 5]
+            #SESH = res[i + 6]
+            #rewards_contract = res[i + 7]
+            #sn_contrib_factory = res[i + 8]
 
             # assert revoker == known_details.revoker, f"Expected {known_details.revoker}, got {revoker}"
 
@@ -286,14 +286,14 @@ async def handle_logs(config: EventScannerConfig, handler_context: NewHeadsSubsc
 
                     if topic == deploy_topic:
                         block = event["blockNumber"]
-                        contract_address = event.args.get("contributorContract")
+                        contract_address = data.args.get("contributorContract")
                         new_logs = []
                         for new_event in await handler_context.async_w3.eth.get_logs({
                             "fromBlock": block,
                             "toBlock": block,
                             "address": contract_address,
                         }):
-                            logs.append(new_event)
+                            new_logs.append(new_event)
                         await handle_logs(config, handler_context, new_logs, depth)
 
 next_block = 0
@@ -326,11 +326,6 @@ async def new_heads_handler(config: EventScannerConfig, handler_context: NewHead
 
 async def monitor_events(config: EventScannerConfig, w3: AsyncWeb3, run_once_as_script=False):
     global last_block, next_block
-    existing_sn_contract_addresses = global_db_reader.get_arbitrum_event_main_args_by_name(
-        "NewServiceNodeContributionContract")
-    for address in existing_sn_contract_addresses:
-        assert is_checksum_address(
-            address), f"Invalid existing NewServiceNodeContributionContract contract address: {address}"
 
     # Note: We need the current block just before we subscribe to new heads, this block number is used to fetch all
     # past events up to and including this "current block". Once we get this block we immediately subscribe to new
@@ -350,7 +345,24 @@ async def monitor_events(config: EventScannerConfig, w3: AsyncWeb3, run_once_as_
     log.info(f"Created {len(w3.subscription_manager.subscriptions)} subscriptions")
 
     global_db_writer.defer_writing_arbitrum_events = True
+    # sn_contrib_factory.add_existing_contribution_contracts(existing_sn_contract_addresses)
+    last_block = max(config.contrib_factory_start_block, await event_queue.run(current_block=current_block))
+
+    global_db_writer.defer_writing_arbitrum_events = False
+    global_db_writer.write_deferred_arbitrum_events_to_db()
+
+    existing_sn_contract_addresses = global_db_reader.get_arbitrum_event_main_args_by_name(
+        "NewServiceNodeContributionContract")
+    for address in existing_sn_contract_addresses:
+        assert is_checksum_address(
+            address), f"Invalid existing NewServiceNodeContributionContract contract address: {address}"
+        event_addresses.add(address)
+
     sn_contrib_factory.add_existing_contribution_contracts(existing_sn_contract_addresses)
+    sn_contrib_factory.bootstrap_contribution_contracts()
+
+    global_db_writer.defer_writing_arbitrum_events = True
+
     last_block = max(config.contrib_factory_start_block, await event_queue.run(current_block=current_block))
 
     global_db_writer.defer_writing_arbitrum_events = False
