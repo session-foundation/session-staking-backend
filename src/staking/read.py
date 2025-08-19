@@ -202,7 +202,7 @@ class DBReaderStaking:
 
                 placeholder= '?' # For SQLite. See DBAPI paramstyle.
                 placeholders= ', '.join(placeholder for unused in contract_ids)
-                query= 'SELECT * FROM arbitrum_events WHERE main_arg IN (%s) ORDER BY block DESC' % placeholders
+                query= 'SELECT * FROM arbitrum_events WHERE main_arg IN (%s) ORDER BY block DESC, log_index DESC' % placeholders
                 cursor.execute(query, contract_ids)
 
                 for event in cursor.fetchall():
@@ -397,13 +397,13 @@ class DBReaderStaking:
                 self.log.perf.end("get_arbitrum_events_by_name")
                 return events
 
-    def get_arbitrum_events_by_main_args(self, main_args: list[str]):
+    def get_arbitrum_events_by_main_args_desc(self, main_args: list[str]):
         self.log.perf.start("get_arbitrum_events_by_main_arg")
         with closing(sql_connect_in_read_mode(self.db_path)) as connection:
             with closing(connection.cursor()) as cursor:
                 cursor.execute(
                     """
-                    SELECT * FROM arbitrum_events WHERE main_arg IN ({})
+                    SELECT * FROM arbitrum_events WHERE main_arg IN ({}) ORDER BY block DESC, log_index DESC
                     """.format(",".join(["?"] * len(main_args))),
                     (tuple(main_args)),
                 )
