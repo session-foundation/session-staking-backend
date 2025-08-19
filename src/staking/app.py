@@ -15,7 +15,7 @@ from .read import DBReaderStaking
 from ..oxen.rpc import OxenRPC
 from ..registration.read import DBReaderRegistrations
 from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
-from ..util.parse import Hex64Converter, EthConverter, eth_format, parse_bls_pubkey
+from ..util.parse import Hex64Converter, EthConverter, eth_format, parse_bls_pubkey, parse_ed25519_pubkey
 from ..web3client.client import Web3Client
 from ..web3client.contracts_ws.service_node_contribution import ServiceNodeContribution
 
@@ -180,6 +180,53 @@ def create_app(config: StakingAppConfig) -> App:
     def route_get_nodes():
         return json_res({"nodes": get_nodes_cached()})
 
+    def get_latest_node_version_info_uncached():
+        network_info, arbitrum_info = get_network_info_cached()
+        height = network_info.get("height", 0)
+        return app.rpc.get_hard_fork_info(height).get()
+
+    def get_latest_node_version_info_cached():
+        return app.cache.get("latest_node_version_info", getter=get_latest_node_version_info_uncached, ttl=600)
+
+    @app.route("/hf_info")
+    def route_get_version_info():
+        return json_res({
+            "version_info": get_latest_node_version_info_cached(),
+        })
+
+    def get_contract_nodes_uncached():
+        events_exit = app.db_reader.get_arbitrum_events_by_name("ServiceNodeExit")
+        sn_ids_exited = set([event.args["serviceNodeID"] for event in events_exit])
+        new_seed_events = app.db_reader.get_arbitrum_events_by_name("NewSeededServiceNode")
+        new_sn_v2_events = app.db_reader.get_arbitrum_events_by_name("NewServiceNodeV2")
+        node_dict = {}
+
+        for event in new_seed_events:
+            sn_id = event.args["serviceNodeID"]
+            node_dict[sn_id] = {
+                "bls": parse_bls_pubkey(event.args.get("blsPubkey")),
+                "ed25519": parse_ed25519_pubkey(event.args.get("ed25519Pubkey")),
+                "in": sn_id not in sn_ids_exited
+            }
+
+        for event in new_sn_v2_events:
+            sn_id = event.args["serviceNodeID"]
+            node_dict[sn_id] = {
+                "bls": parse_bls_pubkey(event.args.get("pubkey")),
+                "ed25519": parse_ed25519_pubkey(event.args.get("serviceNode").get("serviceNodePubkey")),
+                "in": sn_id not in sn_ids_exited
+            }
+
+        return node_dict
+
+    def get_contract_nodes_cached():
+        return app.cache.get("contract_nodes", getter=get_contract_nodes_uncached)
+
+    @app.route("/contract_nodes")
+    def route_get_contract_nodes():
+        return json_res({"nodes": get_contract_nodes_cached()})
+
+    # TODO: get rid of this
     def get_added_bls_keys():
         events_exit = app.db_reader.get_arbitrum_events_by_name("ServiceNodeExit")
         sn_ids_exited = set([event.args["serviceNodeID"] for event in events_exit])
@@ -308,7 +355,7 @@ def create_app(config: StakingAppConfig) -> App:
     def get_contribution_contracts_uncached():
         contracts = app.db_reader.get_contribution_contracts()
         addresses = contracts.keys()
-        contract_events = app.db_reader.get_arbitrum_events_by_main_args(addresses)
+        contract_events = app.db_reader.get_arbitrum_events_by_main_args_desc(addresses)
         for event in contract_events:
             contracts[event.main_arg].events.append(event)
         return contracts
