@@ -1,5 +1,9 @@
 # Session Staking Backend
 
+## Contributing
+
+Known issues, planned refactors, and deferred review feedback are tracked in [BACKLOG.md](BACKLOG.md).
+
 ## Running the backend
 
 ### Pre-requisites
