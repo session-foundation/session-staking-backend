@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
+import time
 from dataclasses import dataclass
 from math import trunc
+from numbers import Number
 
 import flask
 
 from ..util.flask_utils import FlaskApp, json_response, FlaskAppConfig
 from .coingecko import CoinGeckoTokenPriceRequest
-from .read import get_latest_price
+from .read import get_latest_price, get_prices_since
 from .dataclasses import PriceDB
 from .write import write_prices_to_db
 from ..db.util import is_db_initialized, init_db
@@ -70,6 +72,10 @@ class App(FlaskApp):
     def get_token_price_cache_key(token: str):
         return f"price-{token}-all"
 
+    @staticmethod
+    def get_token_prices_cache_key_range(token: str, timestamp: int, resolution: int):
+        return f"price-range-{token}-{timestamp}-{resolution}"
+
 
     def get_price_for_token_cached(self, token: str) -> PriceDB | None:
         key = self.get_token_price_cache_key(token)
@@ -81,9 +87,7 @@ class App(FlaskApp):
         if value is None:
             return None
 
-        invalidate_timestamp = value.updated_at + self.app_config.price_poll_rate_seconds
-
-        self.cache.set_cache_value(key, value, ttl=self.app_config.price_poll_rate_seconds, invalidate_timestamp=invalidate_timestamp)
+        self.cache.set_cache_value(key, value, invalidate_timestamp=value.fetched_at + self.app_config.price_poll_rate_seconds)
 
         return value
 
@@ -109,6 +113,32 @@ class App(FlaskApp):
             "t_stale": stale_time,
         }
 
+    def get_prices_for_token_cached(self, token: str, range_seconds: int, resolution_seconds: int) -> list[PriceDB]:
+        key = self.get_token_prices_cache_key_range(token, range_seconds, resolution_seconds)
+        value = self.cache.get_cached_only(key)
+
+        if value is None:
+            value = get_prices_since(self.db_path, token, trunc(time.time()) - range_seconds)
+
+        if len(value) > 0:
+            self.cache.set_cache_value(key, value, invalidate_timestamp=value[0].updated_at + self.app_config.price_poll_rate_seconds)
+
+        resolved_prices = []
+
+        # NOTE: prices are in descending order or when they were updated
+
+        next_price_resolution = value[0].updated_at + 1
+        for price in value:
+            if price.updated_at > next_price_resolution:
+                continue
+
+            resolved_prices.append({
+                "price": price.price,
+                "t": price.updated_at,
+            })
+            next_price_resolution = price.updated_at - resolution_seconds
+
+        return resolved_prices
 
 def create_app(config: PriceAppConfig) -> App:
     app = App(config)
@@ -137,6 +167,26 @@ def create_app(config: PriceAppConfig) -> App:
         return json_response({
             "price": app.get_token_price_info(token)
         })
+
+    def get_token_price_range_response(token: str, range_seconds: int, resolution_seconds: int):
+        return json_response({
+            "prices": app.get_prices_for_token_cached(token, range_seconds, resolution_seconds),
+        })
+
+    @app.route("/prices/<token>/<period>")
+    def route_get_token_prices_for_token_range(token: str, period: str):
+        match period:
+            case "1h":
+                return get_token_price_range_response(token, 60 * 60, config.price_poll_rate_seconds)
+            case "1d":
+                return get_token_price_range_response(token, 60 * 60 * 24, config.price_poll_rate_seconds)
+            case "7d":
+                return get_token_price_range_response(token, 60 * 60 * 24 * 7, 60 * 60)
+            case "30d":
+                return get_token_price_range_response(token, 60 * 60 * 24 * 30, 1)
+            case _:
+                return flask.abort(400, f"Invalid period {period}")
+
 
     if config.enable_price_fetcher:
         app.log.info("Polling for price info every {} seconds".format(app.price_poll_rate_seconds))

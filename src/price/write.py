@@ -10,8 +10,8 @@ def write_prices_to_db(db_path: str, prices: list[PriceDB]):
         with closing(connection.cursor()) as cursor:
             cursor.executemany(
                 """
-                INSERT INTO prices (token, price, market_cap, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO prices (token, price, market_cap, updated_at, fetched_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     (
@@ -19,6 +19,7 @@ def write_prices_to_db(db_path: str, prices: list[PriceDB]):
                         price.price,
                         price.market_cap,
                         price.updated_at,
+                        price.fetched_at,
                     )
                     for price in prices
                 ),

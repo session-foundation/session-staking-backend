@@ -11,7 +11,7 @@ from src.staking.write import DBWriterStaking
 from src.util.parse import parse_ed25519_pubkey
 from src.web3client.contracts_ws.contract_ws import ContractWS
 from src.web3client.contracts_ws.service_node_contribution import ServiceNodeContribution
-from src.web3client.contracts_ws.subscription import create_subscriptions
+from src.web3client.contracts_ws.contract_utils import queue_past_events_for_scanning
 from src.web3client.event_queue_manager import EventQueueManager
 
 
@@ -38,7 +38,7 @@ class ServiceNodeContributionFactory(ContractWS):
             self.log.warning("No bootstrap contribution contract addresses found")
             return
         self.log.info(f"Bootstrapping {len(self.bootstrap_contribution_contract_addresses)} contribution contracts from block {self.start_block}")
-        self.service_node_contribution_contract.create_subscriptions(
+        self.service_node_contribution_contract.queue_past_events_for_scanning(
             address=self.bootstrap_contribution_contract_addresses, start_block=self.start_block)
         events = self.service_node_contribution_contract.get_events(self.bootstrap_contribution_contract_addresses[0])
         for address in self.bootstrap_contribution_contract_addresses:
@@ -78,12 +78,11 @@ class ServiceNodeContributionFactory(ContractWS):
         events = self.factory(address).events
         return [events[name] for name in self.event_names]
 
-    def create_subscriptions(self, address: ChecksumAddress):
-        return create_subscriptions(
+    def queue_past_events_for_scanning(self, address: ChecksumAddress):
+        return queue_past_events_for_scanning(
             events=self.get_events(address),
             event_queue=self.event_queue,
             event_abis=self.event_abis,
-            handler_sub=self.handle_event_sub,
             handler_past=self.handle_event_bootstrap,
             start_block=self.start_block,
         )

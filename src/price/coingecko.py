@@ -1,4 +1,6 @@
 import logging
+import time
+
 import requests
 
 from .dataclasses import PriceDB
@@ -84,13 +86,14 @@ class CoinGeckoTokenPriceRequest:
                 self.log.warning(f"Token {token} not found in CoinGecko API response")
                 continue
 
+            fetched_at = int(time.time())
             updated_at = response[token].get("last_updated_at", None)
             market_cap = response[token].get(f"usd_market_cap", None)
             price = response[token].get("usd", None)
             if price is None:
                 self.log.warning(f"USD price not found in CoinGecko API response for token {token}")
 
-            result.append(PriceDB(token=token, price=price, market_cap=market_cap, updated_at=updated_at))
+            result.append(PriceDB(token=token, price=price, market_cap=market_cap, updated_at=updated_at, fetched_at=fetched_at))
 
         return result
 

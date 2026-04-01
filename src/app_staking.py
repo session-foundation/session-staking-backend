@@ -10,7 +10,6 @@ staking_app_config = StakingAppConfig(
     sqlite_schema=config.backend.sqlite_schema,
     sqlite_db_registrations=config.backend.registration_sqlite_db,
     sqlite_schema_registrations=config.backend.registration_sqlite_schema,
-    rpc_api=config.backend.rpc_api,
     rpc_api_cache=config.backend.rpc_api_cache,
     rpc_shared=config.backend.rpc_shared,
     rpc_shared_cache=config.backend.rpc_shared_cache,

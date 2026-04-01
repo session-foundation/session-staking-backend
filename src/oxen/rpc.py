@@ -135,6 +135,12 @@ class OxenRPC:
                 "fill_pow_hash": False,
             },
         )
+    def get_hard_fork_info(self, height: int) -> FutureJSON:
+        return self.FutureJSON(
+            "rpc.hard_fork_info",
+            args={"height": height}
+        )
+
 
     def get_service_nodes(self) -> FutureJSON:
         return self.FutureJSON(

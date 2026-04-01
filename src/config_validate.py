@@ -4,7 +4,6 @@ from eth_utils import is_checksum_address
 
 from .log import Log
 from .oxen.rpc import OxenRPC
-from .util import is_not_empty_string
 from .web3client.client import Web3Client
 
 log = Log("config_validate").logger
@@ -35,7 +34,7 @@ def validate_web3_client(conf):
     ) > 0, "web3_provider_urls is not set in config.py"
 
     for web3_provider_url in conf.web3_provider_urls:
-        assert is_not_empty_string(web3_provider_url), "web3_provider_urls is not set properly in config.py"
+        assert web3_provider_url is not None and len(web3_provider_url) > 0, "web3_provider_urls is not set properly in config.py"
 
     web3_client = Web3Client(
         conf.web3_provider_urls,

@@ -159,6 +159,18 @@ CREATE TABLE rewards_info (
     claimed_rewards INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE daily_rewards_info (
+    address BLOB NOT NULL,
+    block INTEGER NOT NULL,
+    lifetime_rewards INTEGER NOT NULL,
+    timestamp FLOAT NOT NULL,
+
+    PRIMARY KEY (address, block)
+);
+
+CREATE INDEX daily_rewards_info_timestamp_asc ON daily_rewards_info(timestamp ASC);
+CREATE INDEX daily_rewards_info_timestamp_desc ON daily_rewards_info(timestamp DESC);
+
 CREATE TABLE arbitrum_info (
     block INTEGER PRIMARY KEY NOT NULL,
     timestamp FLOAT NOT NULL DEFAULT ((julianday('now') - 2440587.5)*86400.0), /* unix epoch */

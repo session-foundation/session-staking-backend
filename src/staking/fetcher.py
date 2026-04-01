@@ -307,6 +307,8 @@ class App:
 
         rewards_info = self.get_rewards_info()
         self.db_writer.write_rewards_info_to_db(rewards_info)
+        now = time.time()
+        self.db_writer.update_daily_rolling_rewards(rewards_info, current_height, now)
 
         self.log.info("Scheduled task finish")
 
@@ -326,11 +328,19 @@ class App:
             nodes: list[ServiceNode] = res.get("service_node_states")
             self.log.debug("Fetched {} service nodes".format(len(nodes)))
 
+            new_seed_events = self.db_reader.get_arbitrum_events_by_name("NewSeededServiceNode",
+                                                                        from_block=self.last_new_sn_event + 1)
             new_sn_events = self.db_reader.get_arbitrum_events_by_name("NewServiceNodeV2",
                                                                        from_block=self.last_new_sn_event + 1)
-            if len(new_sn_events) == 0:
+
+            if len(new_seed_events)== 0 and len(new_sn_events) == 0:
                 self.log.warning("No new service node events found, waiting for new events")
-                return
+                return parsed_nodes, contributions, current_height, len(parsed_nodes), total_staked, active_node_count
+
+            for event in new_seed_events:
+                self.contract_id_map[parse_bls_pubkey(event.args["blsPubkey"])] = event.args["serviceNodeID"]
+                if event.block > self.last_new_sn_event:
+                    self.last_new_sn_event = event.block
 
             for event in new_sn_events:
                 self.contract_id_map[parse_bls_pubkey(event.args["pubkey"])] = event.args["serviceNodeID"]
@@ -345,13 +355,15 @@ class App:
 
                     pubkey_bls = node.get("pubkey_bls")
                     contract_id = self.contract_id_map.get(pubkey_bls)
+                    if contract_id is None:
+                        continue
                     node["contract_id"] = contract_id
 
                     if node["contract_id"] is None:
                         self.log.warning(
                             "Contract ID not found for node with BLS pubkey: {}".format(pubkey_bls)
                         )
-                    assert node["contract_id"] is not None
+                    #assert node["contract_id"] is not None
 
                     # Remove some fields that might appear if field:all is passed to the rpc
                     if "portions_for_operator" in node:
@@ -440,8 +452,10 @@ class App:
 
             pubkey_bls = entry.get("info").get("bls_public_key")
             if pubkey_bls is None:
-                self.log.warning(f"info.bls_public_key is None for bls_exit_liquidation_list entry: {entry}")
-                continue
+                pubkey_bls = entry.get("info").get("pubkey_bls")
+                if pubkey_bls is None:
+                    self.log.warning(f"info.bls_public_key is None for bls_exit_liquidation_list entry: {entry}")
+                    continue
 
             exit_type = entry.get("type")
             exit_events.append(
