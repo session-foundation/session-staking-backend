@@ -13,8 +13,8 @@ class DBReader:
             if not db_path.endswith("?mode=ro"):
                 db_path = db_path + "?mode=ro"
 
-        self.log.info(f"Connecting to db at {db_path}")
         self.db_path = db_path
 
     def connect(self):
+        self.log.info(f"Connecting to db at {self.db_path}")
         return sqlite3.connect(self.db_path, uri=True)

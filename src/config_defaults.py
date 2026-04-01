@@ -24,7 +24,7 @@ class Backend:
     log_level_generic                   = None  # Logs from other packages will use log_level if this is not set
     performance_logging:          bool = False
     oxen_wallet_regex:              str = ""
-    rpc_shared:               list[str] = ""
+    rpc_shared:                    str = ""
     rpc_shared_cache:               int = 2
 
     """
@@ -130,8 +130,6 @@ class Backend:
     coingecko_precision:                int = 9
 
     # Creates a request per period limit by IP address (default is 10 requests per 10 minutes)
-    prices_api_rate_limit:              int = 10
-    prices_api_rate_limit_period:       int = 600
     prices_sqlite_db:                   str = "ssb-prices.db"
     prices_sqlite_schema:               str = "src/price/schema.sql"
     prices_api_default_token:           str = "ethereum"

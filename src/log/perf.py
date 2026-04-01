@@ -6,6 +6,7 @@ from copy import copy
 class PerformanceLogger:
     def __init__(self, logger: logging = None, enabled=True):
         if enabled:
+            assert logger is not None, "PerformanceLogger requires a logger when enabled=True"
             self.logger = logger
             self.start = self._start_enabled
             self.end = self.end_enabled
@@ -26,7 +27,7 @@ class PerformanceLogger:
         self.cpu_times[label] = time.process_time_ns()
 
     def end_enabled(self, label):
-        elapsed_ms, elapsed_cpu_ms = self.end_timer(label)
+        elapsed_ms, elapsed_cpu_ms = self.end_timer_enabled(label)
         self._log_end(label, elapsed_ms, elapsed_cpu_ms)
 
     def end_timer_enabled(self, label):
@@ -44,9 +45,6 @@ class PerformanceLogger:
         return None, None
 
     def _log_end(self, label, elapsed_ms, elapsed_cpu_ms):
-        if self.logger is None:
-            return
-
         if elapsed_ms is not None and elapsed_cpu_ms is not None:
             self.logger.performance(
                 f"Elapsed time for '{label}': {elapsed_ms:.6f} ms ({elapsed_cpu_ms:.6f} cpu ms)"

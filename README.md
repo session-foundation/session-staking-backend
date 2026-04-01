@@ -31,7 +31,7 @@ The backend has multiple parts:
 - **Events**: `app_events.py` retrieves events emitted by contracts on Arbitrum and stores them to the database
 - **Fetcher**: `app_fetcher.py` retrieves data from the Session and Arbitrum network
 - **Price**: `app_price.py` polls Coingecko for pricing information TODO: Merge this into staking
-- **Registrations**: `app_registrations.py` handles HTTP requests for Session node registrations TODO: Merge this into staking
+- **Registrations**: `app_registration.py` handles HTTP requests for Session node registrations TODO: Merge this into staking
 - **Snapshot**: TODO: Remove this class, snapshot should mean copying the DB file or using sqlite's native backup
 - **Staking**: Serves endpoints for managing the state of staking into the Session network via the staking portal website
 
