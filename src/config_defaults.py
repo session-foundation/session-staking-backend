@@ -88,6 +88,7 @@ class Backend:
     rpc_fetcher_cache:             int = 1
     rpc_fetcher_usage_logging:    bool = False
     write_rpc_fail_reasons_to_file: bool = False
+    stale_time_ens_name:           int = 600
 
     """
     VESTING

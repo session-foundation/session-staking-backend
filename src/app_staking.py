@@ -18,7 +18,9 @@ staking_app_config = StakingAppConfig(
     cache_stale_time_seconds=config.backend.stale_time_seconds,
     disable_db_file_rewrite=config.backend.disable_db_file_rewrite,
     stale_time_seconds_contract_abis=config.backend.stale_time_seconds_contract_abis,
+    stale_time_ens_name=config.backend.stale_time_ens_name,
     rpc_api_usage_logging_interval=config.backend.rpc_api_usage_logging_interval,
+    web3_provider_urls_eth=config.backend.web3_provider_urls_eth,
 )
 
 app = create_app(staking_app_config)
