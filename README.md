@@ -1,4 +1,8 @@
-# SENT Staking Backend
+# Session Staking Backend
+
+## Contributing
+
+Known issues, planned refactors, and deferred review feedback are tracked in [BACKLOG.md](BACKLOG.md).
 
 ## Running the backend
 
@@ -7,10 +11,14 @@
 The `liboxenc-dev` and `liboxenmq-dev` packages require the development headers by setting up the
 [Oxen Deb Repository](https://deb.oxen.io). Follow those instructions then they can be installed with `apt`.
 
-To run the backend on **Ubuntu >= 24.04**:
+The backend has been tested on Ubuntu 24.04. It requires Python >=3.11.x and
+`pnpm` from NodeJS >=20.12.x . To get started with this repository ensure you
+have the necessary dependencies and the submodules have been synchronised.
+
 ```shell
 apt install build-essential python3-pip python3-dev pybind11-dev liboxenc-dev liboxenmq-dev
-python3 -m pip install eth_utils web3 PyNaCl Flask uWSGI
+python3 -m pip install --requirement requirements.txt
+git submodule update --init --recursive
 ```
 
 **Python bindings for oxen-mq & oxen-encoding**
@@ -20,21 +28,28 @@ Instructions available at:
 - [oxen-pyoxenc](https://github.com/oxen-io/oxen-pyoxenc)
 - [oxen-pyoxenmq](https://github.com/oxen-io/oxen-pyoxenmq)
 
+### Structure
+
+The backend has multiple parts:
+
+- **Events**: `app_events.py` retrieves events emitted by contracts on Arbitrum and stores them to the database
+- **Fetcher**: `app_fetcher.py` retrieves data from the Session and Arbitrum network
+- **Price**: `app_price.py` polls Coingecko for pricing information TODO: Merge this into staking
+- **Registrations**: `app_registration.py` handles HTTP requests for Session node registrations TODO: Merge this into staking
+- **Snapshot**: TODO: Remove this class, snapshot should mean copying the DB file or using sqlite's native backup
+- **Staking**: Serves endpoints for managing the state of staking into the Session network via the staking portal website
+
 ### Instance
 
-Before running an instance, `oxend` must be running and its address/smart contracts configured in
-`config.py`.
+Before running the Fetcher or API, `oxend` must be running and its address/smart contracts configured in `config.py`.
 
-It's possible to run the service in flask directly but the timers to poll the smart contracts
-requires WSGI. Both methods are detailed below:
+### Running the backend stack
 
-    FLASK_APP=sent flask run --reload --debugger
-    uwsgi --http 127.0.0.1:5000 --master -p 4 -w sent --callable app
+Run the backend using UWSGI (example runs it on port 4455 with 4 request handlers):
 
-You may optionally append `--fs-reload sent.py` to the `uwsgi` invocation to
-automatically restart the server when `sent.py` is modified.
+    uwsgi --http 127.0.0.1:4455 --master -p 4 -w src.app_staking --callable app --mule=src/app_events.py --mule=src/app_fetcher.py
 
-After the server is running, visit `127.0.0.1:5000/info` to verify that the server is up and
+After the server is running, visit `127.0.0.1:4455/info` to verify that the server is up and
 responding correctly with a payload like the following:
 
 ```json
@@ -63,7 +78,7 @@ There are a few ways to make this work.
 
 ### Symlinks
 
-You can add symlinks here to existing oxend sockets.  If oxend and the backend code are running as
+You can add symlinks here to existing oxend sockets. If oxend and the backend code are running as
 the same user then you can simply create a symlink:
 
     ln -s /var/lib/oxend/oxend.sock mainnet.sock
@@ -75,7 +90,7 @@ you can make it work, but will need an extra step to configure socket permission
 
 and then do one of:
 
-- Set the active group of the running sent staking backend to the `_loki` user.  Whether this is
+- Set the active group of the running sent staking backend to the `_loki` user. Whether this is
   easy or not depends on how the backend service is running.
 
 - Add the `_loki` group to the supplemental groups of the user that will be running this backend.
@@ -89,14 +104,14 @@ and then do one of:
 
 Do *NOT*:
 
-- Run any production service as root (including under sudo).  Don't be tempted just because "it
+- Run any production service as root (including under sudo). Don't be tempted just because "it
   works" under sudo: by running things under root/sudo you compromise the security of your entire
-  system as a solution to properly setting up permissions.  Please don't do this, ever.
+  system as a solution to properly setting up permissions. Please don't do this, ever.
 
 ### Make oxend create the socket
 
 The `lmq-public=ipc:///path/to/sent-staking-backend/oxend/mainnet.sock` can be added to oxen.conf
-(or run with `--lmq-public=...`) to have it listen on that socket.  Note that when oxend and
+(or run with `--lmq-public=...`) to have it listen on that socket. Note that when oxend and
 sent-staking-backend are running as separate users, this has the same permission issues as the
 Symlinks approach (see above for solutions).
 
@@ -106,3 +121,4 @@ You can configure oxend with `lmq-public=tcp://127.0.0.1:6789` (choose whatever 
 place of `6789`) in the oxen.conf config file [alternatively: run oxend with
 `--lmq-public=tcp://127.0.0.1:6789`] and then add/uncomment the `mainnet_rpc=...` (or `testnet_rpc=`
 or `devnet_rpc=`) line in config.py.
+

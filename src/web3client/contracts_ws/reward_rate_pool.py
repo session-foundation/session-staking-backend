@@ -1,0 +1,48 @@
+import logging
+
+from eth_typing import ChecksumAddress
+from web3 import AsyncWeb3
+from web3.contract.async_contract import AsyncContractEvent
+from web3.types import EventData
+from web3.utils.subscriptions import EthSubscriptionContext
+
+from src.staking.write import DBWriterStaking
+from src.web3client.contracts_ws.contract_ws import ContractWS
+from src.web3client.contracts_ws.contract_utils import queue_past_events_for_scanning
+from src.web3client.event_queue_manager import EventQueueManager
+
+
+class RewardRatePool(ContractWS):
+    name = "RewardRatePool"
+
+    def __init__(self, w3: AsyncWeb3, db_writer: DBWriterStaking, log: logging,
+                 event_queue: EventQueueManager | None = None):
+        super().__init__(self.name, w3, db_writer, log, event_queue)
+
+    @staticmethod
+    def get_main_arg(event: EventData):
+        match event.event:
+            case "FundsReleased":
+                return event.args.amount
+            case _:
+                return None
+
+    async def handle_event(self, event: EventData):
+        main_arg = RewardRatePool.get_main_arg(event)
+        assert main_arg is not None
+        return await self._handle_event(event, main_arg=main_arg)
+
+    async def handle_event_sub(self, event: EthSubscriptionContext):
+        return await self.handle_event(self._parse_event(event))
+
+    def get_events(self, address: ChecksumAddress) -> list[AsyncContractEvent]:
+        events = self.factory(address).events
+        return [events.FundsReleased]
+
+    def queue_past_events_for_scanning(self, address: ChecksumAddress):
+        return queue_past_events_for_scanning(
+            events=self.get_events(address),
+            event_queue=self.event_queue,
+            event_abis=self.event_abis,
+            handler_past=self.handle_event,
+        )

@@ -1,0 +1,3 @@
+[submodule "session-token-contracts"]
+	path = session-token-contracts
+	url = https://github.com/session-foundation/session-token-contracts.git
