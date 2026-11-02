@@ -1,7 +1,10 @@
+import re
 from typing import Iterable
 
 # ServiceNodeContribution.Status: WaitForOperatorContrib, OpenForPublicContrib, WaitForFinalized, Finalized
 CONTRACT_STATUSES = frozenset(range(4))
+
+CONTRACT_ADDRESS_RE = re.compile("0x[0-9a-fA-F]{40}")
 
 
 def parse_contract_statuses(values: Iterable[str]) -> set[int]:
@@ -14,3 +17,15 @@ def parse_contract_statuses(values: Iterable[str]) -> set[int]:
     if unknown:
         raise ValueError(f"Unknown contract status: {sorted(unknown)}")
     return statuses
+
+
+def parse_contract_address(value: str | None) -> str | None:
+    """
+    Parses an `address` query string value into a lowercase contract address, or None when absent.
+    Raises ValueError if the value is not an Ethereum address.
+    """
+    if value is None:
+        return None
+    if not CONTRACT_ADDRESS_RE.fullmatch(value):
+        raise ValueError(f"Invalid contract address: {value}")
+    return value.lower()
