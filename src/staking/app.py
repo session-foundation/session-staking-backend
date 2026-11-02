@@ -10,7 +10,7 @@ from eth_typing import ChecksumAddress
 from uwsgidecorators import timer
 from werkzeug.exceptions import GatewayTimeout
 
-from .contract_status import parse_contract_statuses
+from .contract_filters import parse_contract_address, parse_contract_statuses
 from .dataclasses import ArbitrumInfo, RewardsInfo, DailyRewardInfoNode
 from .read import DBReaderStaking
 from ..oxen.rpc import OxenRPC
@@ -369,16 +369,22 @@ def create_app(config: StakingAppConfig) -> App:
     def get_open_contract_details():
         contracts = get_contribution_contracts_cached().values()
 
-        # Most callers only need the open contracts; without `status` all contracts are returned.
+        # Most callers only need the open contracts or a single contract; without filters all
+        # contracts are returned.
         try:
             statuses = parse_contract_statuses(flask.request.args.getlist("status"))
+            address = parse_contract_address(flask.request.args.get("address"))
         except ValueError as e:
             return flask.abort(400, str(e))
         if statuses:
             contracts = [contract for contract in contracts if contract.status in statuses]
+        if address:
+            contracts = [contract for contract in contracts if contract.address.lower() == address]
 
+        # Filtered responses leave out added_bls_keys (~90 KB gzipped) but keep the key for schemas.
+        filtered = bool(statuses or address)
         return json_res(
-            {"contracts": list(contracts), "added_bls_keys": get_nodes_bls_keys_cached()}
+            {"contracts": list(contracts), "added_bls_keys": {} if filtered else get_nodes_bls_keys_cached()}
         )
 
     def get_contribution_contracts_for_sn_pubkey_uncached(sn_pubkey: bytes):
