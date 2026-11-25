@@ -36,3 +36,17 @@ def test_amounts_become_strings_and_nothing_else_does():
 
 def test_missing_amounts_stay_null():
     assert amounts_as_text({"amount": None, "reserved": 0}) == {"amount": None, "reserved": "0"}
+
+
+def test_event_amounts_become_strings():
+    events = [
+        {"name": "NewServiceNodeV2", "args": {"serviceNode": {"fee": 0}, "contributors": [
+            {"staker": {"addr": "0xaa", "beneficiary": "0xaa"}, "stakedAmount": 25_000 * 10**9}]}},
+        {"name": "ServiceNodeExit", "args": {"serviceNodeID": 3, "returnedAmount": 25_000 * 10**9}},
+    ]
+
+    out = amounts_as_text(events)
+
+    assert out[0]["args"]["contributors"][0]["stakedAmount"] == "25000000000000"
+    assert out[0]["args"]["serviceNode"]["fee"] == 0
+    assert out[1]["args"] == {"serviceNodeID": 3, "returnedAmount": "25000000000000"}

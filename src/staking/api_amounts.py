@@ -21,6 +21,13 @@ AMOUNT_KEYS = frozenset({
     "balance_reward_rate_pool",
     "balance_service_node_rewards",
     "staking_reward_pool",
+    # Contract event arguments.
+    "stakedAmount",
+    "returnedAmount",
+    "newRequirement",
+    "newThreshold",
+    "previousBalance",
+    "refund",
 })
 
 
