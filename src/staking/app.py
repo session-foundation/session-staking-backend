@@ -10,6 +10,7 @@ from eth_typing import ChecksumAddress
 from uwsgidecorators import timer
 from werkzeug.exceptions import GatewayTimeout
 
+from .api_amounts import amounts_as_text
 from .contract_filters import parse_contract_address, parse_contract_statuses
 from .dataclasses import ArbitrumInfo, RewardsInfo, DailyRewardInfoNode
 from .read import DBReaderStaking
@@ -168,7 +169,7 @@ def create_app(config: StakingAppConfig) -> App:
             network_info["l2_height_timestamp"] = arbitrum_info.timestamp
             vals["network"] = network_info
 
-        return json_response(vals)
+        return json_response(amounts_as_text(vals))
 
     @app.route("/info")
     def get_network_info():
